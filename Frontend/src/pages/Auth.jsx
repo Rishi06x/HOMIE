@@ -67,7 +67,7 @@ const Auth = ({ onAuthenticate }) => {
                     <div className="absolute bottom-0 left-0 w-96 h-96 bg-indigo-600/20 rounded-full blur-[100px] pointer-events-none transform -translate-x-1/3 translate-y-1/3" />
 
                     <div className="relative z-10 mt-2">
-                        <img src={logoImg} alt="Homie Logo" className="h-10 w-auto object-contain bg-white/95 p-1.5 rounded-xl shadow-lg" />
+                        <img src={logoImg} alt="Homie Logo" className="h-20 w-auto object-contain bg-white/95 p-2 rounded-xl shadow-lg" />
                     </div>
 
                     <div className="relative z-10 my-auto py-4">
@@ -125,7 +125,7 @@ const Auth = ({ onAuthenticate }) => {
                 <div className="w-full max-w-[420px] relative z-10 my-8">
 
                     <div className="lg:hidden flex items-center gap-2 mb-6 mt-2">
-                        <img src={logoImg} alt="Homie Logo" className="h-12 w-auto object-contain dark:bg-white/95 dark:p-1.5 dark:rounded-xl" />
+                        <img src={logoImg} alt="Homie Logo" className="h-20 w-auto object-contain dark:bg-white/95 dark:p-2 dark:rounded-xl" />
                     </div>
 
                     <div className="mb-6 text-left">

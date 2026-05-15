@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   Search, MapPin, Bell, Star, ChevronRight, 
@@ -7,7 +8,7 @@ import {
   ShieldAlert, ShieldCheck, ArrowRight, X, User as UserIcon, Check, Power, Brain, Loader2, MessageCircle, ShoppingBag
 } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { getNearbyProfessionals, updateOnlineStatus, getBookings, createBooking, updateBookingStatus, addDiagnostics, startJobWithOtp } from '../api';
+import { getNearbyProfessionals, getBookings, createBooking, updateBookingStatus, addDiagnostics, startJobWithOtp, getProfessionalStats } from '../api';
 import logoImg from '../assets/logo.png';
 import ServiceCatalog from '../components/ServiceCatalog';
 import CheckoutModal from '../components/CheckoutModal';
@@ -20,16 +21,37 @@ import ProfileModal from '../components/ProfileModal';
 const Dashboard = ({ user, onLogout, isVerified, onVerifyClick }) => {
   const [colorTheme, toggleTheme] = useDarkMode();
   const isDark = colorTheme === "light";
+  const [notifications, setNotifications] = useState([]);
+  const [showNotifications, setShowNotifications] = useState(false);
+
+  useEffect(() => {
+    const socket = io('http://localhost:5000', {
+      transports: ['polling', 'websocket'],
+      reconnectionAttempts: 5,
+      timeout: 10000
+    });
+    socket.emit('join', { user_id: user.id });
+    
+    socket.on('notification', (data) => {
+      setNotifications(prev => [data, ...prev]);
+      // Show browser alert for immediate visibility
+      if (data.title && data.message) {
+        // Optional browser notification
+      }
+    });
+    
+    return () => socket.disconnect();
+  }, [user.id]);
   
   if (user.role === 'provider') {
-    return <ProviderDashboard user={user} onLogout={onLogout} toggleTheme={toggleTheme} isDark={isDark} isVerified={isVerified} onVerifyClick={onVerifyClick} />;
+    return <ProviderDashboard user={user} onLogout={onLogout} toggleTheme={toggleTheme} isDark={isDark} isVerified={isVerified} onVerifyClick={onVerifyClick} notifications={notifications} showNotifications={showNotifications} setShowNotifications={setShowNotifications} />;
   }
   
-  return <CustomerDashboard user={user} onLogout={onLogout} toggleTheme={toggleTheme} isDark={isDark} isVerified={isVerified} onVerifyClick={onVerifyClick} />;
+  return <CustomerDashboard user={user} onLogout={onLogout} toggleTheme={toggleTheme} isDark={isDark} isVerified={isVerified} onVerifyClick={onVerifyClick} notifications={notifications} showNotifications={showNotifications} setShowNotifications={setShowNotifications} />;
 };
 
 // --- CUSTOMER DASHBOARD ---
-const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, onVerifyClick }) => {
+const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, onVerifyClick, notifications, showNotifications, setShowNotifications }) => {
   const [searchQuery, setSearchQuery] = useState("");
   const [activeCategory, setActiveCategory] = useState("all");
   const [bookedPro, setBookedPro] = useState(null);
@@ -117,7 +139,7 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
   const fetchMyBookings = async () => {
     try {
       const data = await getBookings();
-      setMyBookings(data || []);
+      setMyBookings((data || []).filter(b => b.is_customer));
     } catch (err) {
       console.error('Failed to fetch bookings:', err);
     }
@@ -179,7 +201,7 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
       <header className="sticky top-0 z-40 bg-white dark:bg-[#0a0a0a] border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-6">
-             <img src={logoImg} alt="Homie Logo" className="h-9 w-auto object-contain dark:bg-white/95 dark:p-1.5 dark:rounded-lg" />
+             <img src={logoImg} alt="Homie Logo" className="h-16 w-auto object-contain dark:bg-white/95 dark:p-1.5 dark:rounded-lg" />
              <div 
                onClick={() => setShowLocationPicker(true)}
                className="hidden sm:flex items-center gap-1.5 px-3 py-1.5 hover:bg-slate-100 dark:hover:bg-slate-900 rounded-lg cursor-pointer transition-colors"
@@ -200,9 +222,34 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
             <button onClick={toggleTheme} className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors hidden sm:block">
               {isDark ? <Sun size={20} /> : <Moon size={20} />}
             </button>
-            <button className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors hidden sm:block">
-              <Bell size={20} />
-            </button>
+            <div className="relative">
+              <button onClick={() => setShowNotifications(!showNotifications)} className="p-2 text-slate-600 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors">
+                <Bell size={20} />
+                {notifications.length > 0 && (
+                  <span className="absolute top-1 right-1 w-2.5 h-2.5 bg-red-500 rounded-full border-2 border-white dark:border-[#0a0a0a]"></span>
+                )}
+              </button>
+              {showNotifications && (
+                <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 z-50 overflow-hidden">
+                  <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                    <h3 className="font-bold">Notifications</h3>
+                    <button onClick={() => setNotifications([])} className="text-xs text-blue-600 hover:text-blue-700">Clear All</button>
+                  </div>
+                  <div className="max-h-80 overflow-y-auto">
+                    {notifications.length === 0 ? (
+                      <p className="p-4 text-sm text-slate-500 text-center">No new notifications</p>
+                    ) : (
+                      notifications.map((notif, idx) => (
+                        <div key={idx} className="p-4 border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                          <h4 className="text-sm font-bold">{notif.title}</h4>
+                          <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{notif.message}</p>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             
             <div className="h-6 w-px bg-slate-200 dark:bg-slate-800 mx-2"></div>
             
@@ -489,11 +536,11 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                            <h3 className="font-bold">{b.provider_id === 'fake' ? 'Professional' : 'Pro Assigned'}</h3>
                            <p className="text-xs text-slate-500 mt-1">Status: <span className={`font-bold uppercase ${b.status === 'en_route' ? 'text-blue-600' : 'text-slate-900 dark:text-white'}`}>{b.status.replace('_', ' ')}</span></p>
                          </div>
-                         {['pending', 'accepted', 'en_route'].includes(b.status) && (
-                           <div className="bg-emerald-50 dark:bg-emerald-900/20 text-emerald-700 dark:text-emerald-400 px-3 py-1.5 rounded-lg text-center border border-emerald-200 dark:border-emerald-800">
-                             <p className="text-[10px] font-bold uppercase mb-0.5 tracking-wider">Start OTP</p>
-                             <p className="text-xl font-black tracking-widest leading-none">{b.status === 'en_route' ? b.job_otp : '****'}</p>
-                           </div>
+                         {['pending', 'accepted', 'en_route', 'arrived'].includes(b.status) && (
+                            <div className="bg-slate-900 text-white px-3 py-1.5 rounded-lg text-center border border-slate-800 shadow-sm">
+                              <p className="text-[10px] font-bold uppercase mb-0.5 tracking-wider opacity-80">Start OTP</p>
+                              <p className="text-xl font-black tracking-widest leading-none">{b.status === 'arrived' ? b.job_otp : '****'}</p>
+                            </div>
                          )}
                       </div>
                       
@@ -504,7 +551,7 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                       )}
 
                       {b.diagnostics_images && b.diagnostics_images.length > 0 && (
-                        <div className="mb-3 text-xs text-emerald-600 font-bold flex items-center gap-1 bg-emerald-50 dark:bg-emerald-900/10 w-max px-2 py-1 rounded">
+                        <div className="mb-3 text-xs text-blue-600 font-bold flex items-center gap-1 bg-blue-50 dark:bg-blue-900/10 w-max px-2 py-1 rounded">
                           <CheckCircle2 size={12} /> Diagnostics Submitted
                         </div>
                       )}
@@ -521,13 +568,13 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                       {b.status === 'completed' && (
                         <button 
                           onClick={() => setShowReviewFor(b)}
-                          className="text-sm font-semibold text-emerald-600 flex items-center gap-1 hover:text-emerald-700 transition-colors bg-emerald-50 dark:bg-emerald-900/20 px-3 py-2 rounded-lg"
+                          className="text-sm font-semibold text-indigo-600 flex items-center gap-1 hover:text-indigo-700 transition-colors bg-indigo-50 dark:bg-indigo-900/20 px-3 py-2 rounded-lg"
                         >
                           <Star size={14} /> Leave a Review
                         </button>
                       )}
 
-                      {['accepted', 'en_route', 'in_progress'].includes(b.status) && (
+                      {['accepted', 'en_route', 'arrived', 'in_progress'].includes(b.status) && (
                         <button 
                           onClick={() => setShowChatFor(b)}
                           className="mt-3 text-sm font-semibold text-indigo-600 flex items-center gap-1 hover:text-indigo-700 transition-colors bg-indigo-50 dark:bg-indigo-900/20 px-3 py-2 rounded-lg w-max"
@@ -663,10 +710,26 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
   );
 };
 
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  render() {
+    if (this.state.hasError) {
+      return <div className="p-10 text-red-500 bg-red-100 rounded-lg shadow-xl m-10"><h2 className="text-2xl font-bold mb-4">React Crash</h2><pre className="text-sm whitespace-pre-wrap">{this.state.error?.toString()}</pre></div>;
+    }
+    return this.props.children;
+  }
+}
+
 // --- PROVIDER DASHBOARD ---
-const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, onVerifyClick }) => {
-  const [isOnline, setIsOnline] = useState(false);
+const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, onVerifyClick, notifications, showNotifications, setShowNotifications }) => {
   const [bookings, setBookings] = useState([]);
+  const [stats, setStats] = useState({ earnings: 0, completed_jobs: 0, rating: user.rating || 0, reviews_count: user.reviews_count || 0 });
   const [showOtpInput, setShowOtpInput] = useState(null);
   const [otpValue, setOtpValue] = useState('');
   const [selectedJob, setSelectedJob] = useState(null);
@@ -685,7 +748,9 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
   const fetchBookings = async () => {
     try {
       const data = await getBookings();
-      setBookings(data || []);
+      setBookings((data || []).filter(b => b.is_provider));
+      const statsData = await getProfessionalStats();
+      if (statsData) setStats(statsData);
     } catch (err) {
       console.error(err);
     }
@@ -697,16 +762,7 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
     return () => clearInterval(interval);
   }, []);
 
-  const handleToggleOnline = async () => {
-    const newStatus = !isOnline;
-    setIsOnline(newStatus);
-    try {
-      await updateOnlineStatus(newStatus);
-    } catch (err) {
-      console.error('Failed to update status:', err);
-      setIsOnline(!newStatus); // revert on error
-    }
-  };
+
 
   const handleAccept = async (jobId) => {
     try {
@@ -741,17 +797,24 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
   };
 
   const pendingJobs = bookings.filter(b => b.status === 'pending');
-  const myActiveJobs = bookings.filter(b => ['accepted', 'en_route', 'in_progress'].includes(b.status));
+  const myActiveJobs = bookings.filter(b => ['accepted', 'en_route', 'arrived', 'in_progress'].includes(b.status));
+  const myCompletedJobs = bookings.filter(b => b.status === 'completed');
 
   return (
+    <ErrorBoundary>
     <div className="min-h-screen bg-slate-50 dark:bg-[#0a0a0a] text-slate-900 dark:text-slate-100 font-sans transition-colors duration-500 pb-20">
       
       {/* Navbar */}
       <header className="bg-white dark:bg-[#0a0a0a] border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 h-16 flex items-center justify-between">
           <div className="flex items-center gap-3">
-             <img src={logoImg} alt="Homie Logo" className="h-9 w-auto object-contain dark:bg-white/95 dark:p-1.5 dark:rounded-lg" />
+             <img src={logoImg} alt="Homie Logo" className="h-16 w-auto object-contain dark:bg-white/95 dark:p-1.5 dark:rounded-lg" />
              <span className="font-bold text-[11px] tracking-widest text-slate-400 uppercase hidden sm:inline ml-1 border border-slate-200 dark:border-slate-800 px-2 py-0.5 rounded-full">Pro Portal</span>
+             
+             <div className="hidden md:flex items-center gap-1.5 ml-4 bg-slate-50 dark:bg-slate-900 px-2 py-1 rounded-md border border-slate-200 dark:border-slate-800">
+                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]"></div>
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-tight">Platform Health: Optimal</span>
+             </div>
              
              <div 
                onClick={() => setShowLocationPicker(true)}
@@ -764,19 +827,41 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
           </div>
 
           <div className="flex items-center gap-4">
-             {isVerified && (
-               <button 
-                 onClick={handleToggleOnline}
-                 className={`hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full border text-xs font-bold transition-all ${isOnline ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:bg-emerald-900/20 dark:border-emerald-900/50 dark:text-emerald-400' : 'border-slate-200 bg-slate-100 text-slate-500 dark:bg-slate-800 dark:border-slate-700 dark:text-slate-400'}`}
-               >
-                 <Power size={12} /> {isOnline ? 'ONLINE' : 'OFFLINE'}
-               </button>
-             )}
+
 
              <button onClick={toggleTheme} className="p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors">
               {isDark ? <Sun size={18} /> : <Moon size={18} />}
              </button>
              
+             <div className="relative">
+               <button onClick={() => setShowNotifications(!showNotifications)} className="p-2 text-slate-500 hover:text-slate-900 dark:text-slate-400 dark:hover:text-white transition-colors">
+                 <Bell size={18} />
+                 {notifications.length > 0 && (
+                   <span className="absolute top-1 right-1 w-2 h-2 bg-red-500 rounded-full"></span>
+                 )}
+               </button>
+               {showNotifications && (
+                 <div className="absolute right-0 mt-2 w-80 bg-white dark:bg-slate-900 rounded-xl shadow-xl border border-slate-200 dark:border-slate-800 z-50 overflow-hidden">
+                   <div className="p-4 border-b border-slate-100 dark:border-slate-800 flex justify-between items-center">
+                     <h3 className="font-bold text-sm">Notifications</h3>
+                     <button onClick={() => setNotifications([])} className="text-xs text-blue-600 hover:text-blue-700">Clear All</button>
+                   </div>
+                   <div className="max-h-80 overflow-y-auto">
+                     {notifications.length === 0 ? (
+                       <p className="p-4 text-sm text-slate-500 text-center">No new notifications</p>
+                     ) : (
+                       notifications.map((notif, idx) => (
+                         <div key={idx} className="p-4 border-b border-slate-100 dark:border-slate-800 hover:bg-slate-50 dark:hover:bg-slate-800/50">
+                           <h4 className="text-sm font-bold">{notif.title}</h4>
+                           <p className="text-xs text-slate-600 dark:text-slate-400 mt-1">{notif.message}</p>
+                         </div>
+                       ))
+                     )}
+                   </div>
+                 </div>
+               )}
+             </div>
+
              <button onClick={!isVerified ? onVerifyClick : undefined} className={`w-8 h-8 rounded-full border flex items-center justify-center overflow-hidden ${!isVerified ? 'border-red-500 cursor-pointer' : 'border-slate-300 dark:border-slate-700'}`}>
                 <UserIcon size={16} className={!isVerified ? 'text-red-500' : 'text-slate-500'} />
              </button>
@@ -826,21 +911,32 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
         </div>
 
         {/* Core Metrics */}
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-10">
-           <div className={`bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-xl p-6 ${!isVerified && 'opacity-60'}`}>
-              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Earnings This Week</span>
-              <h3 className="text-3xl font-black mt-2">₹2,400</h3>
-              <p className="text-xs font-semibold text-emerald-600 mt-2">+12% from last week</p>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-10">
+           <div className={`bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-xl p-6 ${!isVerified && 'opacity-60'} shadow-sm`}>
+              <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Total Earnings</span>
+              <h3 className="text-3xl font-black mt-2 text-slate-900 dark:text-white">₹{stats.earnings}</h3>
+              <div className="flex items-center gap-1 mt-2">
+                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></div>
+                 <p className="text-[10px] font-bold text-emerald-600 uppercase">Live</p>
+              </div>
            </div>
-           <div className={`bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-xl p-6 ${!isVerified && 'opacity-60'}`}>
+           <div className={`bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-xl p-6 ${!isVerified && 'opacity-60'} shadow-sm`}>
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Jobs Completed</span>
-              <h3 className="text-3xl font-black mt-2">12</h3>
-              <p className="text-xs font-semibold text-slate-500 mt-2">2 pending review</p>
+              <h3 className="text-3xl font-black mt-2 text-slate-900 dark:text-white">{stats.completed_jobs}</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase mt-2">Verified records</p>
            </div>
-           <div className={`bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-xl p-6 ${!isVerified && 'opacity-60'}`}>
+           <div className={`bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-xl p-6 ${!isVerified && 'opacity-60'} shadow-sm`}>
               <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider">Overall Rating</span>
-              <h3 className="text-3xl font-black mt-2">{user.rating > 0 ? user.rating.toFixed(1) : '—'}</h3>
-              <p className="text-xs font-semibold text-slate-500 mt-2">From {user.reviews_count || 0} customer reviews</p>
+              <h3 className="text-3xl font-black mt-2 text-slate-900 dark:text-white">{stats.rating > 0 ? stats.rating.toFixed(1) : '—'}</h3>
+              <p className="text-[10px] font-bold text-slate-400 uppercase mt-2">From {stats.reviews_count || 0} reviews</p>
+           </div>
+           <div className={`bg-slate-900 text-white rounded-xl p-6 ${!isVerified && 'opacity-60'} shadow-xl relative overflow-hidden`}>
+              <div className="absolute top-0 right-0 p-2 opacity-20"><Brain size={48} /></div>
+              <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider relative z-10">Market Demand</span>
+              <h3 className="text-3xl font-black mt-2 relative z-10">High</h3>
+              <div className="mt-3 bg-slate-800 h-1.5 w-full rounded-full overflow-hidden relative z-10">
+                 <div className="bg-blue-500 h-full w-[85%] rounded-full shadow-[0_0_10px_rgba(59,130,246,0.5)]"></div>
+              </div>
            </div>
         </div>
 
@@ -926,7 +1022,7 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
         <div>
            <div className="flex items-center justify-between mb-4">
              <h2 className="text-lg font-bold">New Job Requests</h2>
-             {isOnline && isVerified && <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 dark:text-emerald-400 px-2 py-1 rounded-md"><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />Live</span>}
+             {isVerified && <span className="flex items-center gap-1.5 text-xs font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 dark:text-emerald-400 px-2 py-1 rounded-md"><div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />Live</span>}
            </div>
 
            {!isVerified ? (
@@ -934,12 +1030,6 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                  <ShieldAlert className="mx-auto text-slate-400 mb-3" size={32} />
                  <h3 className="font-bold text-slate-900 dark:text-white">Jobs Locked</h3>
                  <p className="text-slate-500 text-sm mt-1">Please verify your account to view available jobs.</p>
-              </div>
-           ) : !isOnline ? (
-              <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-10 text-center">
-                 <Power className="mx-auto text-slate-400 mb-3" size={32} />
-                 <h3 className="font-bold text-slate-900 dark:text-white">You are offline</h3>
-                 <p className="text-slate-500 text-sm mt-1">Toggle your status to online in the top bar to receive job matches.</p>
               </div>
            ) : pendingJobs.length === 0 && myActiveJobs.length === 0 ? (
               <div className="bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 rounded-xl p-10 text-center">
@@ -1026,7 +1116,7 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                                </div>
                             )}
 
-                            {['accepted', 'en_route', 'in_progress'].includes(job.status) && (
+                            {['accepted', 'en_route', 'arrived', 'in_progress'].includes(job.status) && (
                               <button 
                                 onClick={() => setShowChatFor(job)}
                                 className="mb-4 w-max text-sm font-semibold text-indigo-600 flex items-center gap-1 hover:text-indigo-700 transition-colors bg-indigo-50 dark:bg-indigo-900/20 px-3 py-2 rounded-lg"
@@ -1038,28 +1128,44 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                             <div className="flex items-center gap-2 mt-auto pt-4 border-t border-slate-200 dark:border-slate-800">
                                {job.status === 'accepted' && (
                                  <button onClick={() => handleUpdateStatus(job._id, 'en_route')} className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-3 rounded-xl text-sm font-bold flex-1 transition-all shadow-lg shadow-blue-600/20 active:scale-95">
-                                   Enroute & Send OTP
+                                   Enroute
                                  </button>
                                )}
                                
-                               {job.status === 'en_route' && showOtpInput !== job._id && (
-                                 <button onClick={() => setShowOtpInput(job._id)} className="bg-emerald-600 text-white px-4 py-2 rounded-lg text-sm font-bold flex-1">
-                                   Arrived - Enter OTP to Start
+                               {job.status === 'en_route' && (
+                                 <button onClick={() => handleUpdateStatus(job._id, 'arrived')} className="bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white px-4 py-3 rounded-xl text-sm font-bold flex-1 transition-all shadow-lg active:scale-95 border border-slate-800 dark:border-slate-700">
+                                   I've Reached Their Home
                                  </button>
                                )}
 
-                               {job.status === 'en_route' && showOtpInput === job._id && (
-                                 <div className="flex gap-2 flex-1 items-center">
+                               {job.status === 'arrived' && showOtpInput !== job._id && (
+                                 <button onClick={(e) => { e.stopPropagation(); setShowOtpInput(job._id); }} className="bg-slate-900 hover:bg-slate-800 dark:bg-slate-800 dark:hover:bg-slate-700 text-white px-4 py-2 rounded-lg text-sm font-bold flex-1 transition-all shadow-lg active:scale-95 border border-slate-800 dark:border-slate-700">
+                                   Enter OTP to Start
+                                 </button>
+                               )}
+
+                               {job.status === 'arrived' && showOtpInput === job._id && (
+                                 <div className="flex gap-2 flex-1 items-center bg-slate-100 dark:bg-slate-800/50 p-2 rounded-lg">
                                    <input 
                                      type="text" 
-                                     placeholder="4-digit OTP" 
+                                     placeholder="OTP" 
                                      maxLength={4}
                                      value={otpValue}
                                      onChange={e => setOtpValue(e.target.value)}
-                                     className="w-24 text-center p-2 rounded bg-white dark:bg-[#0a0a0a] border border-slate-300 dark:border-slate-700 font-bold"
+                                     className="w-16 text-center p-2 rounded bg-white dark:bg-[#0a0a0a] border border-slate-300 dark:border-slate-700 font-bold"
                                    />
-                                   <button onClick={() => handleStartJob(job._id)} className="bg-emerald-600 text-white px-4 py-2 rounded font-bold">Start</button>
-                                   <button onClick={() => setShowOtpInput(null)} className="text-slate-500 text-sm font-bold px-2">Cancel</button>
+                                   <button 
+                                     onClick={(e) => { e.stopPropagation(); handleStartJob(job._id); }} 
+                                     className="bg-blue-600 hover:bg-blue-700 text-white px-3 py-2 rounded font-bold transition-colors"
+                                   >
+                                     Start
+                                   </button>
+                                   <button 
+                                     onClick={(e) => { e.stopPropagation(); setShowOtpInput(null); }} 
+                                     className="text-slate-500 text-sm font-bold px-2 hover:text-slate-700"
+                                   >
+                                     Cancel
+                                   </button>
                                  </div>
                                )}
 
@@ -1075,8 +1181,30 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                     </div>
                   </div>
                 )}
+
+                {/* Completed Jobs */}
+                {myCompletedJobs.length > 0 && (
+                  <div>
+                    <h3 className="text-sm font-bold text-slate-500 uppercase mb-3">Completed Jobs History</h3>
+                    <div className="space-y-3 opacity-80">
+                      {myCompletedJobs.map((job) => (
+                        <div key={job._id} className="bg-slate-100 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800 rounded-xl p-4 flex flex-col">
+                          <div className="flex justify-between items-start mb-2">
+                            <div>
+                              <h3 className="font-bold text-sm mb-1">{job.customer_name}</h3>
+                              <p className="text-xs text-slate-600 dark:text-slate-400">"{job.issue_description}"</p>
+                            </div>
+                            <span className="text-[10px] font-bold uppercase text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 px-2 py-1 rounded border border-emerald-200 dark:border-emerald-800">
+                              Completed
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
-           )}
+            )}
         </div>
 
         <AnimatePresence>
@@ -1117,6 +1245,7 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
 
       </main>
     </div>
+    </ErrorBoundary>
   );
 };
 

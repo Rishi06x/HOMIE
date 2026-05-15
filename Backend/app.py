@@ -17,7 +17,7 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app, origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"], supports_credentials=True)
-socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading")
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading", http_compression=False)
 
 # ── Config ──────────────────────────────────────────────
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "fallback-secret")
@@ -76,9 +76,11 @@ def token_required(f):
             if not current_user:
                 return jsonify({"error": "User not found"}), 401
         except jwt.ExpiredSignatureError:
-            return jsonify({"error": "Token has expired"}), 401
+            return jsonify({"error": "Session expired. Please log in again."}), 401
         except jwt.InvalidTokenError:
-            return jsonify({"error": "Invalid token"}), 401
+            return jsonify({"error": "Invalid authentication token."}), 401
+        except Exception as e:
+            return jsonify({"error": f"Auth error: {str(e)}"}), 401
 
         return f(current_user, *args, **kwargs)
     return decorated
@@ -273,6 +275,16 @@ def get_me(current_user):
     """Returns the currently authenticated user's data."""
     return jsonify({"user": serialize_user(current_user)}), 200
 
+@app.route("/api/users/verify", methods=["PUT"])
+@token_required
+def verify_user(current_user):
+    """Mark a user as verified in the database."""
+    users_collection.update_one(
+        {"_id": current_user["_id"]},
+        {"$set": {"is_verified": True}}
+    )
+    return jsonify({"message": "Account verified successfully", "is_verified": True}), 200
+
 
 # ═══════════════════════════════════════════════════════
 #  PROFESSIONAL ROUTES
@@ -385,11 +397,92 @@ def update_status(current_user):
 
     return jsonify({"is_online": bool(is_online)}), 200
 
+@app.route("/api/professionals/stats", methods=["GET"])
+@token_required
+def get_professional_stats(current_user):
+    """Get real-time stats for professional dashboard."""
+    # Remove strict role-gate to allow all authenticated users who reach this dashboard to see their stats (which will be 0 if not a pro)
+    user_id = str(current_user["_id"])
+    
+    # Calculate stats from bookings
+    pipeline = [
+        {"$match": {"provider_id": user_id, "status": "completed"}},
+        {"$group": {
+            "_id": None,
+            "total_earnings": {"$sum": "$total_amount"},
+            "completed_jobs": {"$sum": 1}
+        }}
+    ]
+    result = list(bookings_collection.aggregate(pipeline))
+    
+    stats = {
+        "earnings": 0,
+        "completed_jobs": 0,
+        "rating": current_user.get("rating", 0.0),
+        "reviews_count": current_user.get("reviews_count", 0)
+    }
+    
+    if result:
+        stats["earnings"] = round(result[0].get("total_earnings", 0), 2)
+        stats["completed_jobs"] = result[0].get("completed_jobs", 0)
+        
+    return jsonify({"stats": stats}), 200
 
-# ── Health Check ────────────────────────────────────────
+# ── Health Check & Catalog ────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"status": "ok", "service": "HOMIE API"}), 200
+
+@app.route("/api/catalog", methods=["GET"])
+def get_catalog():
+    categories = [
+        {
+            "id": "c1",
+            "name": "Cleaning",
+            "icon": "✨",
+            "services": [
+                {"id": "s1", "name": "Deep Home Cleaning", "price": 1499, "duration": "4 hrs"},
+                {"id": "s2", "name": "Sofa Cleaning", "price": 499, "duration": "1 hr"},
+                {"id": "s3", "name": "Bathroom Cleaning", "price": 399, "duration": "45 mins"},
+            ]
+        },
+        {
+            "id": "c2",
+            "name": "Repairs",
+            "icon": "🔧",
+            "services": [
+                {"id": "s4", "name": "AC Service", "price": 599, "duration": "1.5 hrs"},
+                {"id": "s5", "name": "Washing Machine Repair", "price": 499, "duration": "1 hr"},
+                {"id": "s6", "name": "Refrigerator Repair", "price": 549, "duration": "1.5 hrs"},
+            ]
+        },
+        {
+            "id": "c3",
+            "name": "Electrical & Plumbing",
+            "icon": "⚡",
+            "services": [
+                {"id": "s7", "name": "Switch Board Repair", "price": 199, "duration": "30 mins"},
+                {"id": "s8", "name": "Ceiling Fan Repair", "price": 249, "duration": "45 mins"},
+                {"id": "s9", "name": "Tube Light / Bulb Fitting", "price": 149, "duration": "30 mins"},
+                {"id": "s10", "name": "MCB & Fuse Repair", "price": 299, "duration": "1 hr"},
+                {"id": "s11", "name": "Wiring Issues", "price": 499, "duration": "1.5 hrs"},
+                {"id": "s12", "name": "Tap/Pipe Leakage", "price": 199, "duration": "30 mins"},
+                {"id": "s13", "name": "Washbasin Blockage", "price": 249, "duration": "45 mins"},
+            ]
+        },
+        {
+            "id": "c4",
+            "name": "Salon & Spa",
+            "icon": "✂️",
+            "services": [
+                {"id": "s14", "name": "Men's Haircut", "price": 199, "duration": "30 mins"},
+                {"id": "s15", "name": "Women's Haircut & Styling", "price": 499, "duration": "1 hr"},
+                {"id": "s16", "name": "Facial & Cleanup", "price": 599, "duration": "1 hr"},
+                {"id": "s17", "name": "Manicure & Pedicure", "price": 799, "duration": "1.5 hrs"},
+            ]
+        }
+    ]
+    return jsonify({"categories": categories}), 200
 
 # ═══════════════════════════════════════════════════════
 #  GROWTH & ENGAGEMENT
@@ -510,20 +603,18 @@ def create_booking(current_user):
 def get_bookings(current_user):
     """Get bookings for the current user (either customer or provider)."""
     user_id = str(current_user["_id"])
-    role = current_user.get("role")
     
-    if role in ["seeker", "customer"]:
-        query = {"customer_id": user_id}
-    else:
-        query = {"provider_id": user_id}
+    # Query bookings where this user is either the customer OR the provider
+    query = {"$or": [{"customer_id": user_id}, {"provider_id": user_id}]}
         
     bookings = list(bookings_collection.find(query).sort("created_at", -1))
     for b in bookings:
         b["_id"] = str(b["_id"])
-        # Hide OTP from provider until they arrive, or maybe we just don't hide it for simplicity, 
-        # but in a real app, only the customer sees the OTP to give to the provider.
-        if role == "provider" and b["status"] not in ["in_progress", "completed"]:
-            # Provider needs the OTP from the customer to start the job
+        # Mark the user's relationship to this booking
+        b["is_provider"] = (b.get("provider_id") == user_id)
+        b["is_customer"] = (b.get("customer_id") == user_id)
+        # Hide OTP from provider — only the customer should see the actual code
+        if b["is_provider"] and b["status"] not in ["in_progress", "completed"]:
             b["job_otp"] = "***" 
 
     return jsonify({"bookings": bookings}), 200
@@ -533,24 +624,39 @@ def get_bookings(current_user):
 @token_required
 def update_booking_status(current_user, booking_id):
     """Provider updates the booking status (e.g., accepted, en_route)."""
-    if current_user.get("role") not in ["provider", "professional"]:
-        return jsonify({"error": "Only providers can update status"}), 403
-
     data = request.get_json()
     new_status = data.get("status")
     
-    valid_statuses = ["accepted", "en_route", "completed", "declined"]
+    valid_statuses = ["accepted", "en_route", "arrived", "completed", "declined"]
     if new_status not in valid_statuses:
         return jsonify({"error": "Invalid status"}), 400
 
-    booking = bookings_collection.find_one({"_id": ObjectId(booking_id), "provider_id": str(current_user["_id"])})
+    user_id = str(current_user["_id"])
+    
+    try:
+        booking = bookings_collection.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        return jsonify({"error": "Invalid booking ID"}), 400
+        
     if not booking:
         return jsonify({"error": "Booking not found"}), 404
+    
+    # Verify user is a party to this booking
+    if booking.get("provider_id") != user_id and booking.get("customer_id") != user_id:
+        return jsonify({"error": "You are not authorized for this booking"}), 403
 
     bookings_collection.update_one(
         {"_id": ObjectId(booking_id)},
         {"$set": {"status": new_status, "updated_at": datetime.datetime.utcnow()}}
     )
+
+    if new_status == "arrived":
+        socketio.emit('notification', {
+            'type': 'otp',
+            'title': 'Provider Arrived!',
+            'message': f'Your provider {current_user.get("name")} has arrived. Your OTP is {booking.get("job_otp")}',
+            'job_otp': booking.get("job_otp")
+        }, to=booking["customer_id"])
 
     return jsonify({"message": f"Booking status updated to {new_status}"}), 200
 
@@ -559,8 +665,6 @@ def update_booking_status(current_user, booking_id):
 @token_required
 def add_diagnostics(current_user, booking_id):
     """Customer adds pre-service diagnostics (images/details)."""
-    if current_user.get("role") != "seeker":
-        return jsonify({"error": "Only customers can add diagnostics"}), 403
 
     data = request.get_json()
     image_url = data.get("image_url")
@@ -585,18 +689,24 @@ def add_diagnostics(current_user, booking_id):
 @token_required
 def start_job_with_otp(current_user, booking_id):
     """Provider starts the job by submitting the OTP provided by the customer."""
-    if current_user.get("role") not in ["provider", "professional"]:
-        return jsonify({"error": "Only providers can start jobs"}), 403
 
     data = request.get_json()
     otp_submitted = data.get("otp")
 
-    booking = bookings_collection.find_one({"_id": ObjectId(booking_id), "provider_id": str(current_user["_id"])})
+    try:
+        booking = bookings_collection.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        return jsonify({"error": "Invalid booking ID format"}), 400
+        
     if not booking:
         return jsonify({"error": "Booking not found"}), 404
 
-    if booking.get("status") != "en_route" and booking.get("status") != "accepted":
-        return jsonify({"error": f"Cannot start job from status {booking.get('status')}"}), 400
+    user_id = str(current_user["_id"])
+    if booking.get("provider_id") != user_id and booking.get("customer_id") != user_id:
+        return jsonify({"error": "You are not authorized for this booking"}), 403
+
+    if booking.get("status") != "arrived":
+        return jsonify({"error": f"Cannot start job from status '{booking.get('status')}'. Provider must mark as arrived first."}), 400
 
     if str(booking.get("job_otp")) != str(otp_submitted):
         return jsonify({"error": "Invalid OTP. Please ask the customer for the correct 4-digit code."}), 400
@@ -612,52 +722,6 @@ def start_job_with_otp(current_user, booking_id):
 #  REVIEWS & CATALOG
 # ═══════════════════════════════════════════════════════
 
-@app.route("/api/catalog", methods=["GET"])
-def get_catalog():
-    """Mock Service Catalog inspired by Urban Company."""
-    catalog = [
-        {
-            "id": "c1",
-            "name": "Home Cleaning",
-            "icon": "🧹",
-            "services": [
-                {"id": "s1", "name": "Deep Clean 1BHK", "price": 49.99, "duration": "3 hrs"},
-                {"id": "s2", "name": "Deep Clean 2BHK", "price": 79.99, "duration": "4 hrs"},
-                {"id": "s3", "name": "Sofa Cleaning", "price": 29.99, "duration": "1 hr"}
-            ]
-        },
-        {
-            "id": "c2",
-            "name": "AC & Appliance Repair",
-            "icon": "❄️",
-            "services": [
-                {"id": "s4", "name": "AC Service", "price": 24.99, "duration": "45 mins"},
-                {"id": "s5", "name": "Washing Machine Repair", "price": 34.99, "duration": "1 hr"},
-                {"id": "s6", "name": "Refrigerator Repair", "price": 39.99, "duration": "1 hr"}
-            ]
-        },
-        {
-            "id": "c3",
-            "name": "Plumber & Electrician",
-            "icon": "🔧",
-            "services": [
-                {"id": "s7", "name": "Tap Repair", "price": 14.99, "duration": "30 mins"},
-                {"id": "s8", "name": "Switchboard Repair", "price": 19.99, "duration": "45 mins"},
-                {"id": "s9", "name": "Fan Installation", "price": 24.99, "duration": "1 hr"}
-            ]
-        },
-        {
-            "id": "c4",
-            "name": "Beauty & Salon",
-            "icon": "💇",
-            "services": [
-                {"id": "s10", "name": "Haircut & Beard", "price": 19.99, "duration": "45 mins"},
-                {"id": "s11", "name": "Facial & Cleanup", "price": 39.99, "duration": "1.5 hrs"},
-                {"id": "s12", "name": "Manicure & Pedicure", "price": 49.99, "duration": "2 hrs"}
-            ]
-        }
-    ]
-    return jsonify({"categories": catalog}), 200
 
 
 @app.route("/api/reviews", methods=["POST"])

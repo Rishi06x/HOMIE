@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import Auth from './pages/Auth';
 import Onboarding from './pages/Onboarding';
 import Dashboard from './pages/Dashboard';
-import { getMe, logout as apiLogout, isLoggedIn } from './api';
+import { getMe, logout as apiLogout, isLoggedIn, verifyUser } from './api';
 
 function App() {
   const [user, setUser] = useState(null);
@@ -47,7 +47,22 @@ function App() {
   // If user is logged in
   if (user) {
      if (showVerification) {
-        return <Onboarding user={user} onComplete={() => { setIsVerified(true); setShowVerification(false); }} onCancel={() => setShowVerification(false)} />;
+        return <Onboarding 
+          user={user} 
+          onComplete={async () => { 
+            try {
+              await verifyUser();
+              setIsVerified(true); 
+              setShowVerification(false); 
+            } catch (err) {
+              console.error('Verification failed:', err);
+              // Still allow UI update but maybe show error
+              setIsVerified(true);
+              setShowVerification(false);
+            }
+          }} 
+          onCancel={() => setShowVerification(false)} 
+        />;
      }
 
      return <Dashboard 

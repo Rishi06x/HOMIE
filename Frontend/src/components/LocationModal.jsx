@@ -10,11 +10,33 @@ const LocationModal = ({ isOpen, onClose, currentLocation, onSave }) => {
 
   const handleUseCurrentLocation = () => {
     setIsLocating(true);
-    // Simulate GPS fetch
-    setTimeout(() => {
-      setAddress('123 Premium Blvd, Tech District, City');
+    if ("geolocation" in navigator) {
+      navigator.geolocation.getCurrentPosition(async (position) => {
+        try {
+          const { latitude, longitude } = position.coords;
+          // Use OpenStreetMap Nominatim to get address from coords
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?format=json&lat=${latitude}&lon=${longitude}`);
+          const data = await res.json();
+          if (data && data.display_name) {
+            setAddress(data.display_name);
+          } else {
+            setAddress(`${latitude}, ${longitude}`);
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Failed to get address from coordinates.");
+        } finally {
+          setIsLocating(false);
+        }
+      }, (error) => {
+        console.error(error);
+        alert("Geolocation failed: " + error.message);
+        setIsLocating(false);
+      });
+    } else {
+      alert("Geolocation is not supported by your browser");
       setIsLocating(false);
-    }, 1200);
+    }
   };
 
   const handleSave = () => {
@@ -49,19 +71,20 @@ const LocationModal = ({ isOpen, onClose, currentLocation, onSave }) => {
         <div className="p-6">
           {/* Interactive Map Mockup */}
           <div className="w-full h-48 bg-slate-200 dark:bg-slate-800 rounded-2xl mb-6 relative overflow-hidden group cursor-crosshair">
-            {/* We use a high quality map image placeholder */}
-            <img 
-              src="https://images.unsplash.com/photo-1524661135-423995f22d0b?q=80&w=800&auto=format&fit=crop" 
-              alt="Map View" 
-              className="w-full h-full object-cover opacity-80 group-hover:opacity-100 transition-opacity duration-500"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent"></div>
+            {/* Real Google Map Embed */}
+            <iframe 
+              src={`https://maps.google.com/maps?q=${encodeURIComponent(address || 'New York')}&t=&z=13&ie=UTF8&iwloc=&output=embed`}
+              width="100%" 
+              height="100%" 
+              style={{border:0}} 
+              allowFullScreen="" 
+              loading="lazy" 
+              referrerPolicy="no-referrer-when-downgrade"
+              className="absolute inset-0"
+            ></iframe>
             
-            {/* Center Pin */}
-            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 flex flex-col items-center">
-              <div className="w-12 h-12 bg-blue-600/20 rounded-full animate-ping absolute"></div>
-              <MapPin size={36} className="text-blue-600 drop-shadow-lg relative z-10 -mt-4" fill="white" />
-            </div>
+            {/* Overlay for aesthetic */}
+            <div className="absolute inset-0 bg-blue-600/5 pointer-events-none"></div>
 
             <button 
               onClick={handleUseCurrentLocation}

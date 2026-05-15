@@ -46,10 +46,10 @@ const JobDetailsModal = ({ job, onClose, onAccept, onDecline }) => {
             </div>
             
             <div className="flex items-start gap-3">
-              <Banknote className="text-emerald-500 mt-0.5" size={18} />
+              <Banknote className="text-blue-500 mt-0.5" size={18} />
               <div>
                 <p className="text-xs font-bold text-slate-500 uppercase">Estimated Payout</p>
-                <p className="font-bold text-emerald-600 text-lg">₹{job.total_amount ? job.total_amount.toFixed(2) : '0.00'}</p>
+                <p className="font-bold text-blue-600 text-lg">₹{job.total_amount ? job.total_amount.toFixed(2) : '0.00'}</p>
               </div>
             </div>
 

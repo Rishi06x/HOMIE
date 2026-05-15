@@ -16,6 +16,20 @@ api.interceptors.request.use((config) => {
     return config;
 });
 
+// Handle 401 Unauthorized globally
+api.interceptors.response.use(
+    (response) => response,
+    (error) => {
+        if (error.response && error.response.status === 401) {
+            localStorage.removeItem('homie_token');
+            // Optional: window.location.href = '/login'; or trigger a custom event
+            // For now, we'll just clear the token; App.jsx might not react immediately 
+            // but the next interval call will fail and App.jsx's auth check could help.
+        }
+        return Promise.reject(error);
+    }
+);
+
 // ── Auth API ──────────────────────────────────────
 
 export const registerUser = async (name, email, password, role, location, specialization, pricePerHour) => {
@@ -38,6 +52,11 @@ export const loginUser = async (email, password) => {
 export const getMe = async () => {
     const res = await api.get('/auth/me');
     return res.data.user;
+};
+
+export const verifyUser = async () => {
+    const res = await api.put('/api/users/verify');
+    return res.data;
 };
 
 export const logout = () => {
@@ -63,6 +82,11 @@ export const getNearbyProfessionals = async (category = '', search = '', radius 
 export const updateOnlineStatus = async (isOnline) => {
     const res = await api.put('/api/professionals/status', { is_online: isOnline });
     return res.data;
+};
+
+export const getProfessionalStats = async () => {
+    const res = await api.get('/api/professionals/stats');
+    return res.data.stats;
 };
 
 // ── Bookings API ──────────────────────────────────
