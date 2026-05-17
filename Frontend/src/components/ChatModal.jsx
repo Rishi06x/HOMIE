@@ -4,7 +4,7 @@ import { X, Send, User, MessageCircle } from 'lucide-react';
 import { io } from 'socket.io-client';
 import { getBookingMessages } from '../api';
 
-const SOCKET_SERVER_URL = 'http://13.201.29.187:5000';
+const SOCKET_SERVER_URL = 'http://localhost:5000';
 
 const ChatModal = ({ booking, currentUser, onClose }) => {
   const [messages, setMessages] = useState([]);

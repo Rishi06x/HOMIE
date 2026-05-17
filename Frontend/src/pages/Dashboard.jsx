@@ -28,7 +28,7 @@ const Dashboard = ({ user, onLogout, isVerified, onVerifyClick }) => {
   const [showNotifications, setShowNotifications] = useState(false);
 
   useEffect(() => {
-    const socket = io('http://13.201.29.187:5000', {
+    const socket = io('http://localhost:5000', {
       transports: ['polling', 'websocket'],
       reconnectionAttempts: 5,
       timeout: 10000
