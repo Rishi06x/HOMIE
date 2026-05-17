@@ -16,12 +16,12 @@ from flask_socketio import SocketIO, emit, join_room, leave_room
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:5175"], supports_credentials=True)
+CORS(app) # Allow all origins for the demo
 socketio = SocketIO(app, cors_allowed_origins="*", async_mode="threading", http_compression=False)
 
 # ── Config ──────────────────────────────────────────────
 JWT_SECRET = os.getenv("JWT_SECRET_KEY", "fallback-secret")
-MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017")
+MONGO_URI = os.getenv("MONGO_URI", "mongodb+srv://rishi06:rishi1234@cluster0.hj6gm7c.mongodb.net/homie_db?retryWrites=true&w=majority")
 
 # ── MongoDB ─────────────────────────────────────────────
 client = MongoClient(MONGO_URI)
