@@ -2,13 +2,14 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
-  Search, MapPin, Bell, Star, ChevronRight, 
+  Search, MapPin, Bell, Star, ChevronRight, Navigation,
   Wrench, Scissors, PaintRoller, Sparkles, Zap, Droplets,
   TrendingUp, Calendar, Clock, CheckCircle2, LogOut, Sun, Moon,
-  ShieldAlert, ShieldCheck, ArrowRight, X, User as UserIcon, Check, Power, Brain, Loader2, MessageCircle, ShoppingBag
+  ShieldAlert, ShieldCheck, ArrowRight, X, User as UserIcon, Check, Power, Brain, Loader2, MessageCircle, ShoppingBag, XCircle, CalendarClock, AlertCircle, Wand2,
+  Eye, BadgeCheck, Microscope, ImageIcon
 } from 'lucide-react';
 import { useDarkMode } from '../hooks/useDarkMode';
-import { getNearbyProfessionals, getBookings, createBooking, updateBookingStatus, addDiagnostics, startJobWithOtp, getProfessionalStats } from '../api';
+import { autoMatchBooking, cancelBooking, rescheduleBooking, getNearbyProfessionals, getBookings, createBooking, updateBookingStatus, addDiagnostics, startJobWithOtp, getProfessionalStats, updateProProfile } from '../api';
 import logoImg from '../assets/logo.png';
 import ServiceCatalog from '../components/ServiceCatalog';
 import CheckoutModal from '../components/CheckoutModal';
@@ -17,6 +18,8 @@ import JobDetailsModal from '../components/JobDetailsModal';
 import ChatModal from '../components/ChatModal';
 import LocationModal from '../components/LocationModal';
 import ProfileModal from '../components/ProfileModal';
+import TrackingModal from '../components/TrackingModal';
+import ClaimWarrantyModal from '../components/ClaimWarrantyModal';
 
 const Dashboard = ({ user, onLogout, isVerified, onVerifyClick }) => {
   const [colorTheme, toggleTheme] = useDarkMode();
@@ -75,8 +78,23 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
   const [showReviewFor, setShowReviewFor] = useState(null);
   const [showChatFor, setShowChatFor] = useState(null);
 
-  // Cart & Services State
+  // Reschedule & Cancel state
+  const [showCancelConfirmFor, setShowCancelConfirmFor] = useState(null);
+  const [showRescheduleFor, setShowRescheduleFor] = useState(null);
+  const [newDate, setNewDate] = useState('');
+  const [newTime, setNewTime] = useState('');
+
+  // Tracking state
+  const [showTrackingFor, setShowTrackingFor] = useState(null);
+
+  // Warranty state
+  const [showWarrantyFor, setShowWarrantyFor] = useState(null);
+
+  // Auto-Match & Cart State
   const [cart, setCart] = useState([]);
+  const [isMatching, setIsMatching] = useState(false);
+  const [matchResult, setMatchResult] = useState(null);
+  const [matchingStatus, setMatchingStatus] = useState("Finding experts near you...");
 
   const handleAddToCart = (service, quantityChange) => {
     setCart(prev => {
@@ -93,6 +111,38 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
     });
   };
 
+  useEffect(() => {
+    fetchMyBookings();
+    
+    // Cleanup
+    return () => {
+      setProfessionals([]);
+      setMyBookings([]);
+    };
+  }, []);
+
+  // Smart Search Mapping — natural language → category
+  useEffect(() => {
+    if (!searchQuery) return;
+    const lowerQuery = searchQuery.toLowerCase();
+    
+    const keywordMap = {
+      cleaning: ['clean', 'dust', 'sweep', 'mop', 'bathroom', 'kitchen', 'sofa', 'carpet', 'pest', 'cockroach', 'dirty', 'stain', 'smell', 'floor', 'window', 'hygiene', 'disinfect', 'deep clean'],
+      repairs: ['repair', 'fix', 'broken', 'carpenter', 'wood', 'furniture', 'door', 'cabinet', 'table', 'chair', 'hinge', 'lock', 'key', 'handle', 'wardrobe', 'shelf'],
+      plumbing: ['leak', 'leaking', 'pipe', 'water', 'tap', 'sink', 'toilet', 'drain', 'plumber', 'clog', 'blockage', 'flush', 'drip', 'geyser', 'washbasin', 'overflow', 'seepage', 'tank'],
+      electrical: ['fan', 'light', 'wire', 'switch', 'ac', 'cooler', 'electrician', 'bulb', 'plug', 'power', 'socket', 'circuit', 'breaker', 'mcb', 'fuse', 'inverter', 'wiring', 'short', 'voltage', 'heater'],
+      salon: ['hair', 'cut', 'massage', 'facial', 'spa', 'makeup', 'beauty', 'nails', 'pedicure', 'manicure', 'wax', 'threading', 'bridal', 'grooming', 'shave', 'trim', 'dye', 'color'],
+      painting: ['paint', 'wall', 'color', 'brush', 'primer', 'whitewash', 'texture', 'waterproof', 'polish', 'varnish', 'putty', 'distemper']
+    };
+
+    for (const [category, keywords] of Object.entries(keywordMap)) {
+      if (keywords.some(kw => lowerQuery.includes(kw))) {
+        setActiveCategory(category);
+        break;
+      }
+    }
+  }, [searchQuery]);
+
   const handleFileUpload = (e) => {
     const file = e.target.files[0];
     if (file) {
@@ -105,12 +155,12 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
   };
 
   const categories = [
-    { id: 'cleaning', name: 'Cleaning', icon: <Sparkles size={24} strokeWidth={1.5} /> },
-    { id: 'plumbing', name: 'Plumbing', icon: <Droplets size={24} strokeWidth={1.5} /> },
-    { id: 'repairs', name: 'Repairs', icon: <Wrench size={24} strokeWidth={1.5} /> },
-    { id: 'painting', name: 'Painting', icon: <PaintRoller size={24} strokeWidth={1.5} /> },
-    { id: 'salon', name: 'Salon', icon: <Scissors size={24} strokeWidth={1.5} /> },
-    { id: 'electrical', name: 'Electrical', icon: <Zap size={24} strokeWidth={1.5} /> },
+    { id: 'cleaning', name: 'Cleaning', icon: <Sparkles size={24} strokeWidth={1.5} />, img: 'https://images.unsplash.com/photo-1581578731548-c64695cc6952?w=150&h=150&fit=crop' },
+    { id: 'plumbing', name: 'Plumbing', icon: <Droplets size={24} strokeWidth={1.5} />, img: 'https://images.unsplash.com/photo-1585704032915-c3400ca199e7?w=150&h=150&fit=crop' },
+    { id: 'repairs', name: 'Repairs', icon: <Wrench size={24} strokeWidth={1.5} />, img: 'https://images.unsplash.com/photo-1581141849291-1125c7b692b5?w=150&h=150&fit=crop' },
+    { id: 'painting', name: 'Painting', icon: <PaintRoller size={24} strokeWidth={1.5} />, img: 'https://images.unsplash.com/photo-1589939705384-5185137a7f0f?w=150&h=150&fit=crop' },
+    { id: 'salon', name: 'Salon', icon: <Scissors size={24} strokeWidth={1.5} />, img: 'https://images.unsplash.com/photo-1560066984-138dadb4c035?w=150&h=150&fit=crop' },
+    { id: 'electrical', name: 'Electrical', icon: <Zap size={24} strokeWidth={1.5} />, img: 'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?w=150&h=150&fit=crop' },
   ];
 
   // Fetch professionals from API whenever category or search changes
@@ -185,6 +235,60 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
       alert('Diagnostics added! The pro will review them.');
     } catch (err) {
       alert('Failed to add diagnostics');
+    }
+  };
+
+  const handleCancelBooking = async (bookingId) => {
+    try {
+      const res = await cancelBooking(bookingId);
+      alert(res.cancellation_fee > 0 ? `Booking cancelled. A fee of ₹${res.cancellation_fee} was applied.` : 'Booking cancelled successfully.');
+      setShowCancelConfirmFor(null);
+      fetchMyBookings();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to cancel booking');
+    }
+  };
+
+  const handleRescheduleBooking = async (bookingId) => {
+    if (!newDate || !newTime) return alert("Please select date and time");
+    try {
+      await rescheduleBooking(bookingId, newDate, newTime);
+      alert("Booking rescheduled successfully");
+      setShowRescheduleFor(null);
+      fetchMyBookings();
+    } catch (err) {
+      alert(err.response?.data?.error || 'Failed to reschedule booking');
+    }
+  };
+
+  const handleAutoMatch = async () => {
+    if (cart.length === 0) return alert("Select at least one service");
+    
+    setIsMatching(true);
+    setMatchResult(null);
+    setMatchingStatus("Analyzing your requirements...");
+
+    try {
+      // Simulate matching phases for UX
+      setTimeout(() => setMatchingStatus("Scanning for top-rated professionals..."), 1500);
+      setTimeout(() => setMatchingStatus("Pinging nearby experts..."), 3000);
+
+      const totalAmount = cart.reduce((sum, item) => sum + (item.price * item.quantity), 0);
+      const res = await autoMatchBooking(activeCategory, cart, totalAmount);
+      
+      // Delay final success to show UI
+      setTimeout(() => {
+        setMatchResult(res);
+        setIsMatching(false);
+        setCart([]); // Clear cart on success
+        fetchMyBookings();
+      }, 4500);
+
+    } catch (err) {
+      setTimeout(() => {
+        setIsMatching(false);
+        alert(err.response?.data?.error || "No professionals available right now.");
+      }, 2000);
     }
   };
 
@@ -310,7 +414,7 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                animate={{ opacity: 1, y: 0 }}
                className="text-4xl sm:text-6xl font-black tracking-tight mb-4 leading-tight"
              >
-               Premium Home Services,<br/>On Demand.
+               Home services, <br/>on demand.
              </motion.h1>
              <motion.p 
                initial={{ opacity: 0, y: 20 }}
@@ -318,7 +422,7 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                transition={{ delay: 0.1 }}
                className="text-blue-100 text-base sm:text-lg mb-8 font-medium max-w-xl"
              >
-               Book verified professionals for cleaning, repairs, and beauty services instantly with AI-powered matchmaking.
+               Book verified professionals for repairs, cleaning, and beauty. AI-powered matching in seconds.
              </motion.p>
              
              <motion.div 
@@ -334,12 +438,12 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                  type="text" 
                  value={searchQuery}
                  onChange={(e) => setSearchQuery(e.target.value)}
-                 placeholder="What do you need help with today?" 
+                 placeholder="Try: leaking tap, broken fan, deep cleaning..." 
                  className="w-full bg-white dark:bg-slate-900 text-slate-900 dark:text-white focus:outline-none py-4 sm:py-5 pl-14 pr-16 text-base sm:text-lg font-semibold placeholder-slate-400"
                />
                <div className="absolute inset-y-0 right-2 flex items-center">
                  {searchQuery ? (
-                   <button onClick={() => setSearchQuery("")} className="p-2 mr-2 text-slate-400 hover:text-slate-600 bg-slate-100 dark:bg-slate-800 rounded-full transition-colors">
+                   <button onClick={() => { setSearchQuery(""); setActiveCategory("all"); }} className="p-2 mr-2 text-slate-400 hover:text-slate-600 bg-slate-100 dark:bg-slate-800 rounded-full transition-colors">
                      <X size={18} />
                    </button>
                  ) : (
@@ -349,48 +453,141 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                  )}
                </div>
              </motion.div>
+
+             {/* Quick Search Chips */}
+             <motion.div 
+               initial={{ opacity: 0 }}
+               animate={{ opacity: 1 }}
+               transition={{ delay: 0.35 }}
+               className="flex flex-wrap gap-2 mt-5"
+             >
+               {['Leaking tap', 'AC not cooling', 'Fan repair', 'Deep cleaning', 'Haircut at home', 'Wall painting'].map((term) => (
+                 <button 
+                   key={term}
+                   onClick={() => setSearchQuery(term)}
+                   className="text-xs font-bold text-white/90 bg-white/15 hover:bg-white/25 px-3.5 py-1.5 rounded-full backdrop-blur-sm transition-colors border border-white/10"
+                 >
+                   {term}
+                 </button>
+               ))}
+             </motion.div>
            </div>
         </div>
 
-        {/* Categories Grid (Bento Style) */}
+        {/* How It Works */}
+        {activeCategory === 'all' && (
+          <div className="mb-12">
+            <h2 className="text-2xl font-black tracking-tight mb-6 text-center">How Homie Works</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+              {[
+                { step: '1', title: 'Describe', desc: 'Tell us what you need or search for a service.', icon: <Search size={24} className="text-blue-600" /> },
+                { step: '2', title: 'AI Match', desc: 'Our engine finds the best-rated pro near you.', icon: <Brain size={24} className="text-indigo-600" /> },
+                { step: '3', title: 'Confirm', desc: 'Review pricing, schedule, and confirm via OTP.', icon: <ShieldCheck size={24} className="text-emerald-600" /> },
+                { step: '4', title: 'Relax', desc: 'Your verified pro arrives. Pay after the job.', icon: <CheckCircle2 size={24} className="text-amber-500" /> },
+              ].map((item) => (
+                <motion.div 
+                  key={item.step}
+                  initial={{ opacity: 0, y: 15 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: Number(item.step) * 0.1 }}
+                  className="relative bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 text-center shadow-sm hover:shadow-md transition-shadow"
+                >
+                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 w-7 h-7 bg-slate-900 dark:bg-white text-white dark:text-slate-900 rounded-full flex items-center justify-center text-xs font-black shadow-md">
+                    {item.step}
+                  </div>
+                  <div className="mt-3 mb-3 flex justify-center">{item.icon}</div>
+                  <h3 className="font-bold text-sm mb-1">{item.title}</h3>
+                  <p className="text-xs text-slate-500 leading-relaxed">{item.desc}</p>
+                </motion.div>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Banner Section */}
+        <div className="mb-10 flex gap-4 overflow-x-auto pb-4 scrollbar-hide">
+           <div className="min-w-[300px] sm:min-w-[400px] h-40 rounded-3xl bg-gradient-to-r from-blue-500 to-indigo-600 flex items-center p-6 text-white shadow-lg relative overflow-hidden shrink-0">
+             <div className="relative z-10 w-2/3">
+               <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-2 py-1 rounded-md mb-2 inline-block">Offer</span>
+               <h3 className="font-bold text-xl sm:text-2xl mb-1">Save 15% on AC Service</h3>
+               <p className="text-sm text-blue-100 mb-3">Get your AC summer ready.</p>
+               <button className="bg-white text-blue-600 text-xs font-bold px-4 py-2 rounded-lg shadow-sm hover:scale-105 transition-transform">Book Now</button>
+             </div>
+             <div className="absolute right-[-20px] bottom-[-20px] opacity-20"><Zap size={150} /></div>
+           </div>
+           <div className="min-w-[300px] sm:min-w-[400px] h-40 rounded-3xl bg-gradient-to-r from-emerald-500 to-emerald-700 flex items-center p-6 text-white shadow-lg relative overflow-hidden shrink-0">
+             <div className="relative z-10 w-2/3">
+               <span className="text-xs font-black uppercase tracking-wider bg-white/20 px-2 py-1 rounded-md mb-2 inline-block">New</span>
+               <h3 className="font-bold text-xl sm:text-2xl mb-1">Expert Inspection</h3>
+               <p className="text-sm text-emerald-100 mb-3">Not sure what's broken? We'll check.</p>
+               <button className="bg-white text-emerald-600 text-xs font-bold px-4 py-2 rounded-lg shadow-sm hover:scale-105 transition-transform">Explore</button>
+             </div>
+             <div className="absolute right-[-20px] bottom-[-20px] opacity-20"><ShieldCheck size={150} /></div>
+           </div>
+        </div>
+
+        {/* Categories Grid (Urban Company Style) */}
         <div className="mb-14">
           <div className="flex items-center justify-between mb-6">
-             <h2 className="text-2xl font-black tracking-tight">Our Services</h2>
+             <h2 className="text-2xl font-black tracking-tight">What are you looking for?</h2>
              {activeCategory !== 'all' && (
                 <button onClick={() => setActiveCategory('all')} className="text-sm font-semibold text-slate-500 hover:text-blue-600 transition-colors">Clear Filter</button>
              )}
           </div>
           
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-6 gap-3 sm:gap-4">
+          <div className="flex gap-4 sm:gap-8 overflow-x-auto pb-4 scrollbar-hide snap-x">
             {categories.map((cat, idx) => (
-              <motion.button
-                whileHover={{ scale: 1.03, y: -4 }}
-                whileTap={{ scale: 0.98 }}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: idx * 0.05 }}
+              <motion.div
+                whileHover={{ scale: 1.05 }}
+                whileTap={{ scale: 0.95 }}
                 key={cat.id}
                 onClick={() => setActiveCategory(cat.id === activeCategory ? 'all' : cat.id)}
-                className={`flex flex-col items-center justify-center p-5 sm:p-7 rounded-3xl border transition-all shadow-sm ${
-                  activeCategory === cat.id 
-                  ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20 shadow-blue-500/20 shadow-lg ring-2 ring-blue-500/20' 
-                  : 'border-slate-200 dark:border-slate-800 bg-white dark:bg-[#0a0a0a] hover:border-blue-300 dark:hover:border-blue-700 hover:shadow-md'
-                }`}
+                className="flex flex-col items-center cursor-pointer shrink-0 w-20 sm:w-28 snap-start"
               >
-                <div className={`mb-3 ${activeCategory === cat.id ? 'text-blue-600 dark:text-blue-400' : 'text-slate-600 dark:text-slate-400'}`}>
-                  {cat.icon}
+                <div className={`w-20 h-20 sm:w-28 sm:h-28 rounded-2xl sm:rounded-3xl mb-3 overflow-hidden shadow-sm border-2 transition-all ${
+                  activeCategory === cat.id 
+                  ? 'border-blue-500 p-1 bg-blue-50 dark:bg-blue-900/20 shadow-blue-500/30 shadow-lg ring-2 ring-blue-500/20' 
+                  : 'border-transparent bg-slate-100 dark:bg-slate-900 hover:shadow-md'
+                }`}>
+                  <img src={cat.img} alt={cat.name} className={`w-full h-full object-cover rounded-xl sm:rounded-2xl ${activeCategory === cat.id ? '' : 'opacity-90'}`} />
                 </div>
-                <span className={`text-[13px] font-bold tracking-wide uppercase ${activeCategory === cat.id ? 'text-blue-700 dark:text-blue-300' : 'text-slate-700 dark:text-slate-300'}`}>
+                <span className={`text-[12px] sm:text-[14px] font-bold tracking-wide text-center leading-tight ${activeCategory === cat.id ? 'text-blue-700 dark:text-blue-300' : 'text-slate-700 dark:text-slate-300'}`}>
                   {cat.name}
                 </span>
-              </motion.button>
+              </motion.div>
             ))}
           </div>
         </div>
 
+        {/* Homie Guarantee Section */}
+        {activeCategory === 'all' && (
+          <div className="mb-14 grid grid-cols-1 md:grid-cols-3 gap-4">
+             <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
+                <ShieldCheck className="text-blue-600 mb-3 bg-blue-100 dark:bg-blue-900/50 p-3 rounded-full" size={56} strokeWidth={1.5} />
+                <h3 className="font-bold mb-1 text-lg">Homie Safe</h3>
+                <p className="text-sm text-slate-500 font-medium">Up to ₹10,000 insurance against damages on all services.</p>
+             </div>
+             <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
+                <Clock className="text-emerald-600 mb-3 bg-emerald-100 dark:bg-emerald-900/50 p-3 rounded-full" size={56} strokeWidth={1.5} />
+                <h3 className="font-bold mb-1 text-lg">On-Time Arrival</h3>
+                <p className="text-sm text-slate-500 font-medium">If your professional is late, we'll credit ₹100 to your wallet.</p>
+             </div>
+             <div className="bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-3xl p-6 flex flex-col items-center text-center shadow-sm hover:shadow-md transition-shadow">
+                <Wand2 className="text-indigo-600 mb-3 bg-indigo-100 dark:bg-indigo-900/50 p-3 rounded-full" size={56} strokeWidth={1.5} />
+                <h3 className="font-bold mb-1 text-lg">Expert Professionals</h3>
+                <p className="text-sm text-slate-500 font-medium">Top 1% rated, background-verified pros with 5+ years experience.</p>
+             </div>
+          </div>
+        )}
+
         {/* Service Catalog UI */}
         {activeCategory !== 'all' && (
-          <ServiceCatalog categoryId={activeCategory} onAddToCart={handleAddToCart} cart={cart} />
+          <ServiceCatalog 
+            categoryId={activeCategory} 
+            onAddToCart={handleAddToCart} 
+            cart={cart} 
+            onAutoMatch={handleAutoMatch}
+          />
         )}
 
         {/* Professionals List — from API */}
@@ -421,85 +618,184 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                <p className="text-slate-400 text-sm mt-1">Try expanding your search or changing the category.</p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                {professionals.map((pro) => (
                  <motion.div 
                    key={pro.id} 
                    initial={{ opacity: 0, y: 10 }}
                    animate={{ opacity: 1, y: 0 }}
-                   className="bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-2xl p-5 hover:shadow-md transition-shadow flex flex-col"
+                   whileHover={{ y: -4 }}
+                   className="bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-3xl overflow-hidden hover:shadow-xl transition-all flex flex-col group"
                  >
-                   <div className="flex items-start gap-4 mb-4">
-                     <div className="w-14 h-14 bg-slate-100 dark:bg-slate-900 rounded-full flex items-center justify-center text-slate-600 dark:text-slate-400 font-bold text-lg overflow-hidden border border-slate-200 dark:border-slate-800">
-                        <img src={`https://ui-avatars.com/api/?name=${pro.name.replace(' ', '+')}&background=random&color=fff`} alt={pro.name} className="w-full h-full object-cover" />
-                     </div>
-                     <div className="flex-1">
-                       <div className="flex items-center gap-2">
-                         <h3 className="font-bold text-base leading-tight">{pro.name}</h3>
-                         {pro.is_verified && <ShieldCheck size={14} className="text-blue-600" />}
+                   {/* Pro Header */}
+                   <div className="p-5 pb-3">
+                     <div className="flex items-start gap-4">
+                       <div className="w-16 h-16 bg-slate-100 dark:bg-slate-900 rounded-2xl flex items-center justify-center overflow-hidden border-2 border-slate-200 dark:border-slate-800 shadow-sm">
+                          <img src={`https://ui-avatars.com/api/?name=${pro.name.replace(' ', '+')}&background=0D8ABC&color=fff&bold=true&size=128`} alt={pro.name} className="w-full h-full object-cover" />
                        </div>
-                       <p className="text-slate-500 dark:text-slate-400 text-[13px] font-medium mt-0.5 capitalize">
-                         {specLabels[pro.specialization] || pro.specialization}
-                       </p>
-                       <div className="flex items-center gap-3 mt-1.5">
-                         <div className="flex items-center gap-1">
-                           <Star size={12} className="fill-slate-900 text-slate-900 dark:fill-white dark:text-white" />
-                           <span className="text-[13px] font-bold">{pro.rating > 0 ? pro.rating.toFixed(1) : 'New'}</span>
-                           {pro.reviews_count > 0 && <span className="text-[13px] text-slate-500">({pro.reviews_count})</span>}
+                       <div className="flex-1 min-w-0">
+                         <div className="flex items-center gap-1.5">
+                           <h3 className="font-bold text-base leading-tight truncate">{pro.name}</h3>
+                           {pro.is_verified && <BadgeCheck size={16} className="text-blue-600 shrink-0" />}
                          </div>
-                         <span className="text-[12px] text-slate-400 flex items-center gap-1">
-                           <MapPin size={10} /> {pro.distance_km} km
-                         </span>
+                         <p className="text-slate-500 dark:text-slate-400 text-[13px] font-medium mt-0.5 capitalize">
+                           {specLabels[pro.specialization] || pro.specialization}
+                         </p>
+                         <div className="flex items-center gap-3 mt-1.5 flex-wrap">
+                           <div className="flex items-center gap-1">
+                             <Star size={13} className="fill-amber-400 text-amber-400" />
+                             <span className="text-[13px] font-bold">{pro.rating > 0 ? pro.rating.toFixed(1) : 'New'}</span>
+                             {pro.reviews_count > 0 && <span className="text-[12px] text-slate-400">({pro.reviews_count})</span>}
+                           </div>
+                           <span className="text-[12px] text-slate-400 flex items-center gap-1">
+                             <MapPin size={10} /> {pro.distance_km} km
+                           </span>
+                           {pro.is_online && (
+                             <span className="text-[10px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 dark:text-emerald-400 px-2 py-0.5 rounded-full flex items-center gap-1">
+                               <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" /> Online
+                             </span>
+                           )}
+                         </div>
                        </div>
                      </div>
+
+                     {/* Bio snippet */}
+                     {pro.bio && (
+                       <p className="text-[12px] text-slate-500 dark:text-slate-400 mt-3 leading-relaxed line-clamp-2">
+                         "{pro.bio}"
+                       </p>
+                     )}
                    </div>
+
+                   {/* Portfolio strip */}
+                   {pro.portfolio_images && pro.portfolio_images.length > 0 && (
+                     <div className="px-5 pb-3">
+                       <div className="flex gap-2 overflow-hidden">
+                         {pro.portfolio_images.slice(0, 3).map((img, idx) => (
+                           <div key={idx} className="w-20 h-14 rounded-lg overflow-hidden border border-slate-200 dark:border-slate-800 shrink-0">
+                             <img src={img} alt="Work" className="w-full h-full object-cover opacity-90 group-hover:opacity-100 transition-opacity" />
+                           </div>
+                         ))}
+                         {pro.portfolio_images.length > 3 && (
+                           <div className="w-20 h-14 rounded-lg bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center shrink-0">
+                             <span className="text-[11px] font-bold text-slate-500">+{pro.portfolio_images.length - 3}</span>
+                           </div>
+                         )}
+                       </div>
+                     </div>
+                   )}
                    
                    {/* AI Score Bar */}
-                   <div className="mb-4">
+                   <div className="px-5 pb-3">
                      <div className="flex items-center justify-between mb-1">
-                       <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
-                         <Brain size={10} /> AI Match Score
+                       <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider flex items-center gap-1">
+                         <Brain size={10} /> AI Match
                        </span>
-                       <span className="text-[12px] font-bold text-blue-600">{pro.ai_score}%</span>
+                       <span className="text-[11px] font-bold text-blue-600">{pro.ai_score}%</span>
                      </div>
-                     <div className="w-full h-1.5 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
+                     <div className="w-full h-1 bg-slate-100 dark:bg-slate-800 rounded-full overflow-hidden">
                        <motion.div 
                          initial={{ width: 0 }}
                          animate={{ width: `${pro.ai_score}%` }}
                          transition={{ duration: 0.8, delay: 0.2 }}
-                         className="h-full bg-blue-600 rounded-full"
+                         className={`h-full rounded-full ${pro.ai_score >= 70 ? 'bg-blue-600' : pro.ai_score >= 40 ? 'bg-amber-500' : 'bg-slate-400'}`}
                        />
                      </div>
                    </div>
 
-                   <div className="flex items-center justify-between mt-auto pt-4 border-t border-slate-100 dark:border-slate-800">
+                   {/* Footer */}
+                   <div className="flex items-center justify-between mt-auto px-5 py-4 border-t border-slate-100 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30">
                       <div>
-                        <span className="text-lg font-bold">₹{pro.price_per_hour}</span>
+                        <span className="text-lg font-black">₹{pro.price_per_hour}</span>
                         <span className="text-xs text-slate-500 font-medium">/hr</span>
                       </div>
-                      
-                      <div className="flex items-center gap-2">
-                        {pro.is_online && (
-                          <span className="text-[11px] font-bold text-emerald-600 bg-emerald-50 dark:bg-emerald-900/20 dark:text-emerald-400 px-2 py-0.5 rounded-full flex items-center gap-1">
-                            <div className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" /> Online
-                          </span>
-                        )}
-                        <button 
-                          onClick={() => {
-                            if (!isVerified) onVerifyClick();
-                            else setBookedPro(pro);
-                          }}
-                          className="bg-slate-100 dark:bg-slate-900 text-slate-900 dark:text-white px-5 py-2 rounded-lg text-[13px] font-bold hover:bg-slate-200 dark:hover:bg-slate-800 transition-colors"
-                        >
-                          Book Now
-                        </button>
-                      </div>
+                      <button 
+                        onClick={() => {
+                          if (!isVerified) onVerifyClick();
+                          else setBookedPro(pro);
+                        }}
+                        className="bg-slate-900 dark:bg-white text-white dark:text-slate-900 px-6 py-2.5 rounded-xl text-[13px] font-bold hover:bg-slate-800 dark:hover:bg-slate-100 transition-colors shadow-sm"
+                      >
+                        Book Now
+                      </button>
                    </div>
                  </motion.div>
                ))}
             </div>
           )}
         </div>
+
+        {/* Most Booked Services — Trending */}
+        {activeCategory === 'all' && (
+          <div className="mb-14 mt-8">
+            <h2 className="text-2xl font-black tracking-tight mb-6">Most Booked Services</h2>
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
+              {[
+                { name: 'AC Service & Repair', price: 599, cat: 'repairs', icon: <Zap size={20} className="text-blue-500" /> },
+                { name: 'Deep Home Cleaning', price: 1499, cat: 'cleaning', icon: <Sparkles size={20} className="text-emerald-500" /> },
+                { name: 'Electrician Visit', price: 199, cat: 'electrical', icon: <Zap size={20} className="text-amber-500" /> },
+                { name: 'Plumber Visit', price: 199, cat: 'plumbing', icon: <Droplets size={20} className="text-cyan-500" /> },
+                { name: 'Haircut at Home', price: 199, cat: 'salon', icon: <Scissors size={20} className="text-pink-500" /> },
+                { name: 'Wall Painting', price: 2499, cat: 'painting', icon: <PaintRoller size={20} className="text-orange-500" /> },
+                { name: 'Tap Leak Fix', price: 199, cat: 'plumbing', icon: <Droplets size={20} className="text-blue-400" /> },
+                { name: 'Fan Installation', price: 249, cat: 'electrical', icon: <Zap size={20} className="text-yellow-500" /> },
+              ].map((item, idx) => (
+                <motion.button
+                  key={idx}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={() => { setActiveCategory(item.cat); }}
+                  className="bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-2xl p-4 text-left hover:shadow-md transition-all group"
+                >
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-10 h-10 bg-slate-50 dark:bg-slate-900 rounded-xl flex items-center justify-center group-hover:scale-110 transition-transform">
+                      {item.icon}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <h3 className="text-sm font-bold truncate">{item.name}</h3>
+                      <p className="text-xs text-slate-500">from <span className="font-bold text-slate-900 dark:text-white">₹{item.price}</span></p>
+                    </div>
+                  </div>
+                </motion.button>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Footer — Trust & Stats */}
+        {activeCategory === 'all' && (
+          <div className="mt-8 mb-6">
+            <div className="bg-gradient-to-br from-slate-900 to-slate-800 dark:from-slate-800 dark:to-slate-900 rounded-3xl p-8 sm:p-10 text-white shadow-xl">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-6 mb-8">
+                {[
+                  { label: 'Professionals', value: '2,500+' },
+                  { label: 'Services Completed', value: '50,000+' },
+                  { label: 'Cities', value: '25+' },
+                  { label: 'Customer Rating', value: '4.8★' },
+                ].map((stat, i) => (
+                  <div key={i} className="text-center">
+                    <h3 className="text-2xl sm:text-3xl font-black">{stat.value}</h3>
+                    <p className="text-xs text-slate-400 font-bold uppercase tracking-wider mt-1">{stat.label}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="border-t border-slate-700 pt-6 flex flex-col sm:flex-row items-center justify-between gap-4">
+                <div className="flex items-center gap-3">
+                  <ShieldCheck className="text-emerald-400" size={24} />
+                  <div>
+                    <p className="text-sm font-bold">100% Satisfaction Guarantee</p>
+                    <p className="text-xs text-slate-400">Free re-service if you're not happy</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-2 text-xs text-slate-500">
+                  <span>© 2026 Homie</span>
+                  <span>•</span>
+                  <span>Made with ❤️ in India</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
         {/* Slide-over Cart / Bookings Drawer */}
         <AnimatePresence>
           {showCart && (
@@ -534,7 +830,6 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                       <div className="flex justify-between items-start mb-3">
                          <div>
                            <h3 className="font-bold">{b.provider_id === 'fake' ? 'Professional' : 'Pro Assigned'}</h3>
-                           <p className="text-xs text-slate-500 mt-1">Status: <span className={`font-bold uppercase ${b.status === 'en_route' ? 'text-blue-600' : 'text-slate-900 dark:text-white'}`}>{b.status.replace('_', ' ')}</span></p>
                          </div>
                          {['pending', 'accepted', 'en_route', 'arrived'].includes(b.status) && (
                             <div className="bg-slate-900 text-white px-3 py-1.5 rounded-lg text-center border border-slate-800 shadow-sm">
@@ -542,6 +837,52 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                               <p className="text-xl font-black tracking-widest leading-none">{b.status === 'arrived' ? b.job_otp : '****'}</p>
                             </div>
                          )}
+                      </div>
+                      
+                      {/* Visual Status Timeline */}
+                      <div className="mb-4 mt-1">
+                        {(() => {
+                          const steps = ['pending', 'accepted', 'en_route', 'arrived', 'in_progress', 'completed'];
+                          const stepLabels = { pending: 'Placed', accepted: 'Accepted', en_route: 'On Way', arrived: 'Arrived', in_progress: 'Working', completed: 'Done' };
+                          const currentIdx = steps.indexOf(b.status);
+                          const isCancelled = b.status === 'cancelled';
+                          
+                          if (isCancelled) {
+                            return (
+                              <div className="flex items-center gap-2 bg-red-50 dark:bg-red-900/10 text-red-600 border border-red-200 dark:border-red-800 rounded-lg px-3 py-2">
+                                <XCircle size={16} />
+                                <span className="text-xs font-bold uppercase">Booking Cancelled</span>
+                              </div>
+                            );
+                          }
+                          
+                          return (
+                            <div className="flex items-center gap-0">
+                              {steps.map((step, idx) => {
+                                const isPast = idx < currentIdx;
+                                const isCurrent = idx === currentIdx;
+                                return (
+                                  <React.Fragment key={step}>
+                                    <div className="flex flex-col items-center" title={stepLabels[step]}>
+                                      <div className={`w-4 h-4 rounded-full flex items-center justify-center transition-all ${
+                                        isPast ? 'bg-blue-600' : isCurrent ? 'bg-blue-600 ring-4 ring-blue-100 dark:ring-blue-900/50' : 'bg-slate-200 dark:bg-slate-700'
+                                      }`}>
+                                        {isPast && <Check size={10} className="text-white" strokeWidth={3} />}
+                                        {isCurrent && <div className="w-1.5 h-1.5 bg-white rounded-full animate-pulse" />}
+                                      </div>
+                                      <span className={`text-[8px] font-bold mt-1 uppercase tracking-wider ${isCurrent ? 'text-blue-600' : isPast ? 'text-slate-500' : 'text-slate-300 dark:text-slate-600'}`}>
+                                        {stepLabels[step]}
+                                      </span>
+                                    </div>
+                                    {idx < steps.length - 1 && (
+                                      <div className={`flex-1 h-0.5 mt-[-12px] min-w-[12px] ${isPast ? 'bg-blue-600' : 'bg-slate-200 dark:bg-slate-700'}`} />
+                                    )}
+                                  </React.Fragment>
+                                );
+                              })}
+                            </div>
+                          );
+                        })()}
                       </div>
                       
                       {b.issue_description && (
@@ -566,21 +907,61 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                       ) : null}
 
                       {b.status === 'completed' && (
-                        <button 
-                          onClick={() => setShowReviewFor(b)}
-                          className="text-sm font-semibold text-indigo-600 flex items-center gap-1 hover:text-indigo-700 transition-colors bg-indigo-50 dark:bg-indigo-900/20 px-3 py-2 rounded-lg"
-                        >
-                          <Star size={14} /> Leave a Review
-                        </button>
+                        <div className="flex gap-2">
+                          <button 
+                            onClick={() => setShowReviewFor(b)}
+                            className="text-sm font-semibold text-indigo-600 flex items-center gap-1 hover:text-indigo-700 transition-colors bg-indigo-50 dark:bg-indigo-900/20 px-3 py-2 rounded-lg"
+                          >
+                            <Star size={14} /> Leave a Review
+                          </button>
+                          <button 
+                            onClick={() => setShowWarrantyFor(b)}
+                            className="text-sm font-semibold text-emerald-600 flex items-center gap-1 hover:text-emerald-700 transition-colors bg-emerald-50 dark:bg-emerald-900/20 px-3 py-2 rounded-lg"
+                          >
+                            <ShieldAlert size={14} /> Claim Warranty
+                          </button>
+                        </div>
                       )}
 
                       {['accepted', 'en_route', 'arrived', 'in_progress'].includes(b.status) && (
-                        <button 
-                          onClick={() => setShowChatFor(b)}
-                          className="mt-3 text-sm font-semibold text-indigo-600 flex items-center gap-1 hover:text-indigo-700 transition-colors bg-indigo-50 dark:bg-indigo-900/20 px-3 py-2 rounded-lg w-max"
-                        >
-                          <MessageCircle size={14} /> Open Live Chat
-                        </button>
+                        <div className="flex gap-2 mt-3">
+                          <button 
+                            onClick={() => setShowChatFor(b)}
+                            className="flex-1 text-sm font-semibold text-indigo-600 flex items-center justify-center gap-1 hover:text-indigo-700 transition-colors bg-indigo-50 dark:bg-indigo-900/20 px-3 py-2 rounded-lg"
+                          >
+                            <MessageCircle size={14} /> Chat
+                          </button>
+                          {b.status === 'en_route' && (
+                            <button 
+                              onClick={() => setShowTrackingFor(b)}
+                              className="flex-1 text-sm font-semibold text-amber-600 flex items-center justify-center gap-1 hover:text-amber-700 transition-colors bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg border border-amber-200 dark:border-amber-800"
+                            >
+                              <Navigation size={14} /> Track Pro
+                            </button>
+                          )}
+                        </div>
+                      )}
+
+                      {/* Cancel & Reschedule buttons */}
+                      {['pending', 'accepted'].includes(b.status) && (
+                        <div className="flex gap-2 mt-3">
+                          <button 
+                            onClick={() => setShowCancelConfirmFor(b._id)}
+                            className="flex-1 text-sm font-semibold text-red-600 flex items-center justify-center gap-1 hover:text-red-700 transition-colors bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg"
+                          >
+                            <XCircle size={14} /> Cancel
+                          </button>
+                          <button 
+                            onClick={() => {
+                              setShowRescheduleFor(b);
+                              setNewDate(b.scheduled_date || '');
+                              setNewTime(b.scheduled_time || '');
+                            }}
+                            className="flex-1 text-sm font-semibold text-blue-600 flex items-center justify-center gap-1 hover:text-blue-700 transition-colors bg-blue-50 dark:bg-blue-900/20 px-3 py-2 rounded-lg"
+                          >
+                            <CalendarClock size={14} /> Reschedule
+                          </button>
+                        </div>
                       )}
 
                       {/* Diagnostics Upload UI */}
@@ -616,6 +997,52 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
                     </div>
                   )}
                 </div>
+
+                {/* Cart Footer with Pricing Intelligence */}
+                {cart.length > 0 && (
+                  <div className="p-6 border-t border-slate-100 dark:border-slate-800 bg-white dark:bg-slate-900">
+                    <div className="space-y-2 mb-6">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-slate-500">Subtotal</span>
+                        <span className="font-bold">₹{cart.reduce((sum, item) => sum + (item.price * item.quantity), 0)}</span>
+                      </div>
+                      
+                      {cart.length >= 3 && (
+                        <div className="flex justify-between text-sm text-emerald-600 font-bold">
+                          <span>Combo Discount (10% Off)</span>
+                          <span>-₹{Math.round(cart.reduce((sum, item) => sum + (item.price * item.quantity), 0) * 0.1)}</span>
+                        </div>
+                      )}
+
+                      {new Date().getHours() >= 17 && new Date().getHours() <= 21 && (
+                        <div className="flex justify-between text-sm text-amber-600 font-bold">
+                          <span className="flex items-center gap-1"><Zap size={14} /> Peak Hour Surge (1.2x)</span>
+                          <span>+20%</span>
+                        </div>
+                      )}
+
+                      <div className="flex justify-between items-center pt-2 border-t border-slate-100 dark:border-slate-800">
+                        <span className="text-lg font-black">Total</span>
+                        <span className="text-2xl font-black text-blue-600">
+                          ₹{Math.round(
+                            (cart.reduce((sum, item) => sum + (item.price * item.quantity), 0) * (cart.length >= 3 ? 0.9 : 1)) * 
+                            (new Date().getHours() >= 17 && new Date().getHours() <= 21 ? 1.2 : 1)
+                          )}
+                        </span>
+                      </div>
+                    </div>
+
+                    <button 
+                      onClick={handleAutoMatch}
+                      className="w-full bg-blue-600 text-white font-black py-4 rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20 flex items-center justify-center gap-2"
+                    >
+                      <Wand2 size={20} /> Auto-Match & Book Now
+                    </button>
+                    <p className="text-[10px] text-center text-slate-400 mt-3 font-bold uppercase tracking-widest">
+                      Secure payment via Homie Pay
+                    </p>
+                  </div>
+                )}
               </motion.div>
             </>
           )}
@@ -660,6 +1087,25 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
       </AnimatePresence>
 
       <AnimatePresence>
+         {showTrackingFor && (
+            <TrackingModal 
+              booking={showTrackingFor}
+              onClose={() => setShowTrackingFor(null)}
+              socket={socket}
+            />
+         )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+         {showWarrantyFor && (
+            <ClaimWarrantyModal 
+              booking={showWarrantyFor}
+              onClose={() => setShowWarrantyFor(null)}
+            />
+         )}
+      </AnimatePresence>
+
+      <AnimatePresence>
          {showReviewFor && (
             <ReviewModal 
               booking={showReviewFor}
@@ -679,6 +1125,141 @@ const CustomerDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
              onClose={() => setShowChatFor(null)} 
            />
          )}
+      </AnimatePresence>
+
+      {/* Reschedule Modal */}
+      <AnimatePresence>
+         {showRescheduleFor && (
+           <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowRescheduleFor(null)} />
+              <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 w-full max-w-sm rounded-2xl p-6 relative z-10 shadow-2xl">
+                 <h2 className="text-xl font-bold mb-4">Reschedule Booking</h2>
+                 <div className="space-y-4 mb-6">
+                    <div>
+                      <label className="block text-sm font-bold mb-1">New Date</label>
+                      <input type="date" value={newDate} onChange={e => setNewDate(e.target.value)} className="w-full p-3 border border-slate-200 dark:border-slate-700 rounded-xl dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-bold mb-1">New Time</label>
+                      <input type="time" value={newTime} onChange={e => setNewTime(e.target.value)} className="w-full p-3 border border-slate-200 dark:border-slate-700 rounded-xl dark:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                    </div>
+                 </div>
+                 <div className="flex gap-3">
+                   <button onClick={() => setShowRescheduleFor(null)} className="flex-1 bg-slate-100 dark:bg-slate-800 font-bold py-3 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">Cancel</button>
+                   <button onClick={() => handleRescheduleBooking(showRescheduleFor._id)} className="flex-1 bg-blue-600 text-white font-bold py-3 rounded-xl hover:bg-blue-700 transition-colors">Confirm</button>
+                 </div>
+              </motion.div>
+           </div>
+         )}
+      </AnimatePresence>
+
+      {/* Cancel Confirmation Modal */}
+      <AnimatePresence>
+         {showCancelConfirmFor && (
+           <div className="fixed inset-0 z-[100] flex items-center justify-center px-4">
+              <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowCancelConfirmFor(null)} />
+              <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }} className="bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 w-full max-w-sm rounded-2xl p-6 relative z-10 shadow-2xl text-center">
+                 <div className="w-16 h-16 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                    <AlertCircle size={32} />
+                 </div>
+                 <h2 className="text-xl font-bold mb-2">Cancel Booking?</h2>
+                 <p className="text-slate-500 text-sm mb-6">Are you sure you want to cancel this booking? If the professional is already on their way, a ₹50 cancellation fee may apply.</p>
+                 <div className="flex gap-3">
+                   <button onClick={() => setShowCancelConfirmFor(null)} className="flex-1 bg-slate-100 dark:bg-slate-800 font-bold py-3 rounded-xl hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors">No, Keep It</button>
+                   <button onClick={() => handleCancelBooking(showCancelConfirmFor)} className="flex-1 bg-red-600 text-white font-bold py-3 rounded-xl hover:bg-red-700 transition-colors">Yes, Cancel</button>
+                 </div>
+              </motion.div>
+           </div>
+         )}
+      </AnimatePresence>
+
+      {/* MATCHING OVERLAY */}
+      <AnimatePresence>
+        {isMatching && (
+          <motion.div 
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[200] flex flex-col items-center justify-center bg-slate-900/95 backdrop-blur-xl text-white p-6 text-center"
+          >
+            <div className="relative mb-12">
+               {/* Pulsing circles */}
+               <motion.div 
+                 animate={{ scale: [1, 1.5, 1], opacity: [0.3, 0.1, 0.3] }}
+                 transition={{ duration: 2, repeat: Infinity }}
+                 className="absolute inset-0 bg-blue-500 rounded-full blur-3xl"
+               />
+               <div className="relative w-32 h-32 bg-blue-600 rounded-full flex items-center justify-center shadow-2xl shadow-blue-500/50">
+                  <Brain size={48} className="animate-pulse" />
+               </div>
+            </div>
+            
+            <motion.h2 
+              key={matchingStatus}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="text-3xl font-black mb-4 tracking-tight"
+            >
+              {matchingStatus}
+            </motion.h2>
+            <p className="text-slate-400 font-medium max-w-xs mx-auto">
+              We're matching you with the highest-rated "Homie" available right now.
+            </p>
+            
+            <div className="mt-12 flex gap-1">
+               {[0, 1, 2].map(i => (
+                 <motion.div 
+                   key={i}
+                   animate={{ scale: [1, 1.5, 1], opacity: [0.5, 1, 0.5] }}
+                   transition={{ duration: 1, repeat: Infinity, delay: i * 0.2 }}
+                   className="w-2 h-2 bg-blue-500 rounded-full"
+                 />
+               ))}
+            </div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* MATCH SUCCESS MODAL */}
+      <AnimatePresence>
+        {matchResult && (
+          <div className="fixed inset-0 z-[210] flex items-center justify-center px-4">
+            <motion.div 
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} 
+              className="absolute inset-0 bg-slate-900/80 backdrop-blur-md"
+              onClick={() => setMatchResult(null)}
+            />
+            <motion.div 
+              initial={{ scale: 0.9, opacity: 0, y: 20 }}
+              animate={{ scale: 1, opacity: 1, y: 0 }}
+              className="bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 w-full max-w-sm rounded-3xl p-8 relative z-10 shadow-2xl text-center"
+            >
+               <div className="w-20 h-20 bg-emerald-100 dark:bg-emerald-900/30 text-emerald-600 rounded-full flex items-center justify-center mx-auto mb-6">
+                  <Sparkles size={40} />
+               </div>
+               <h2 className="text-2xl font-black mb-2">Homie Assigned!</h2>
+               <p className="text-slate-500 dark:text-slate-400 text-sm mb-8">
+                 We've matched you with <span className="font-bold text-slate-900 dark:text-white">{matchResult.provider.name}</span>. 
+                 They are just <span className="font-bold text-blue-600">{matchResult.provider.distance_km}km</span> away!
+               </p>
+               
+               <div className="bg-slate-50 dark:bg-slate-900 rounded-2xl p-4 mb-8 flex items-center justify-between border border-slate-100 dark:border-slate-800">
+                  <div className="flex items-center gap-1">
+                    <Star size={16} className="fill-amber-400 text-amber-400" />
+                    <span className="font-bold">{matchResult.provider.rating} Rating</span>
+                  </div>
+                  <div className="text-xs font-bold text-slate-400 uppercase tracking-widest">Top Rated</div>
+               </div>
+
+               <button 
+                onClick={() => { setMatchResult(null); setShowCart(true); }}
+                className="w-full bg-blue-600 text-white font-bold py-4 rounded-2xl hover:bg-blue-700 transition-all shadow-lg shadow-blue-500/20"
+               >
+                 View Booking Details
+               </button>
+            </motion.div>
+          </div>
+        )}
       </AnimatePresence>
 
       <AnimatePresence>
@@ -737,13 +1318,27 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
   const [showLocationPicker, setShowLocationPicker] = useState(false);
 
   // Portfolio State
-  const [portfolioImages, setPortfolioImages] = useState([
+  const [portfolioImages, setPortfolioImages] = useState(user.portfolio_images || [
     'https://images.unsplash.com/photo-1581578731548-c64695cc6952?q=80&w=200&auto=format&fit=crop',
     'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?q=80&w=200&auto=format&fit=crop'
   ]);
   const [newImageUrl, setNewImageUrl] = useState('');
-  const [bio, setBio] = useState('I am an experienced local professional. I might not have formal degrees, but my practical work and customer satisfaction speak for themselves!');
+  const [bio, setBio] = useState(user.bio || 'I am an experienced local professional. I might not have formal degrees, but my practical work and customer satisfaction speak for themselves!');
   const [isEditingExpertise, setIsEditingExpertise] = useState(false);
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+
+  const saveProfile = async () => {
+    setIsSavingProfile(true);
+    try {
+      await updateProProfile(bio, portfolioImages);
+      setIsEditingExpertise(false);
+    } catch (err) {
+      console.error(err);
+      alert('Failed to save profile updates.');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
 
   const fetchBookings = async () => {
     try {
@@ -947,12 +1542,28 @@ const ProviderDashboard = ({ user, onLogout, toggleTheme, isDark, isVerified, on
               <h2 className="text-lg font-bold flex items-center gap-2">
                  <Star className="text-blue-600" size={20} /> My Expertise & Portfolio
               </h2>
-              <button 
-                 onClick={() => setIsEditingExpertise(!isEditingExpertise)}
-                 className="text-sm font-bold text-blue-600 bg-blue-50 dark:bg-blue-900/20 px-4 py-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/40 transition-colors"
-              >
-                 {isEditingExpertise ? 'Save Changes' : 'Edit Profile'}
-              </button>
+              <div className="flex gap-2">
+                {isEditingExpertise && (
+                  <button 
+                    onClick={() => setIsEditingExpertise(false)}
+                    className="text-sm font-bold text-slate-600 bg-slate-100 dark:bg-slate-800 px-4 py-1.5 rounded-lg hover:bg-slate-200 dark:hover:bg-slate-700 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                )}
+                <button 
+                   onClick={() => isEditingExpertise ? saveProfile() : setIsEditingExpertise(true)}
+                   disabled={isSavingProfile}
+                   className={`text-sm font-bold px-4 py-1.5 rounded-lg transition-colors flex items-center gap-1.5 ${
+                     isEditingExpertise 
+                       ? 'bg-blue-600 text-white hover:bg-blue-700' 
+                       : 'text-blue-600 bg-blue-50 dark:bg-blue-900/20 hover:bg-blue-100 dark:hover:bg-blue-900/40'
+                   }`}
+                >
+                   {isSavingProfile && <Loader2 size={14} className="animate-spin" />}
+                   {isEditingExpertise ? (isSavingProfile ? 'Saving...' : 'Save Changes') : 'Edit Profile'}
+                </button>
+              </div>
             </div>
             
             <div className="bg-white dark:bg-[#0a0a0a] border border-slate-200 dark:border-slate-800 rounded-xl p-6 shadow-sm">

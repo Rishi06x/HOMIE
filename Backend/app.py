@@ -107,6 +107,11 @@ def serialize_user(user):
         "is_online": user.get("is_online", False),
         "subscription_status": user.get("subscription_status", "free"),
         "created_at": user.get("created_at", "").isoformat() if user.get("created_at") else None,
+        "bio": user.get("bio", "I am an experienced local professional. I might not have formal degrees, but my practical work and customer satisfaction speak for themselves!"),
+        "portfolio_images": user.get("portfolio_images", [
+            'https://images.unsplash.com/photo-1581578731548-c64695cc6952?q=80&w=200&auto=format&fit=crop',
+            'https://images.unsplash.com/photo-1621905251189-08b45d6a269e?q=80&w=200&auto=format&fit=crop'
+        ]),
     }
 
 
@@ -368,6 +373,8 @@ def get_nearby_professionals(current_user):
             "is_online": is_online,
             "location_text": pro.get("location_text", ""),
             "ai_score": ai_score,
+            "bio": pro.get("bio", ""),
+            "portfolio_images": pro.get("portfolio_images", []),
         })
 
     # Sort by AI score (highest first)
@@ -428,6 +435,31 @@ def get_professional_stats(current_user):
         
     return jsonify({"stats": stats}), 200
 
+@app.route("/api/professionals/profile", methods=["PUT"])
+@token_required
+def update_pro_profile(current_user):
+    """Update professional bio and portfolio images."""
+    if current_user.get("role") != "provider":
+        return jsonify({"error": "Only providers can update profile"}), 403
+
+    data = request.get_json()
+    bio = data.get("bio")
+    portfolio_images = data.get("portfolio_images", [])
+
+    update_data = {}
+    if bio is not None:
+        update_data["bio"] = bio
+    if portfolio_images is not None:
+        update_data["portfolio_images"] = portfolio_images
+
+    if update_data:
+        users_collection.update_one(
+            {"_id": current_user["_id"]},
+            {"$set": update_data}
+        )
+
+    return jsonify({"message": "Profile updated successfully"}), 200
+
 # ── Health Check & Catalog ────────────────────────────────────────
 @app.route("/", methods=["GET"])
 def health():
@@ -444,6 +476,7 @@ def get_catalog():
                 {"id": "s1", "name": "Deep Home Cleaning", "price": 1499, "duration": "4 hrs"},
                 {"id": "s2", "name": "Sofa Cleaning", "price": 499, "duration": "1 hr"},
                 {"id": "s3", "name": "Bathroom Cleaning", "price": 399, "duration": "45 mins"},
+                {"id": "s_insp_1", "name": "Expert Inspection (Cleaning)", "price": 99, "duration": "30 mins", "is_inspection": True},
             ]
         },
         {
@@ -454,6 +487,7 @@ def get_catalog():
                 {"id": "s4", "name": "AC Service", "price": 599, "duration": "1.5 hrs"},
                 {"id": "s5", "name": "Washing Machine Repair", "price": 499, "duration": "1 hr"},
                 {"id": "s6", "name": "Refrigerator Repair", "price": 549, "duration": "1.5 hrs"},
+                {"id": "s_insp_2", "name": "Expert Inspection (Repairs)", "price": 99, "duration": "30 mins", "is_inspection": True},
             ]
         },
         {
@@ -468,6 +502,7 @@ def get_catalog():
                 {"id": "s11", "name": "Wiring Issues", "price": 499, "duration": "1.5 hrs"},
                 {"id": "s12", "name": "Tap/Pipe Leakage", "price": 199, "duration": "30 mins"},
                 {"id": "s13", "name": "Washbasin Blockage", "price": 249, "duration": "45 mins"},
+                {"id": "s_insp_3", "name": "Expert Inspection (Elec/Plumb)", "price": 99, "duration": "30 mins", "is_inspection": True},
             ]
         },
         {
@@ -479,6 +514,22 @@ def get_catalog():
                 {"id": "s15", "name": "Women's Haircut & Styling", "price": 499, "duration": "1 hr"},
                 {"id": "s16", "name": "Facial & Cleanup", "price": 599, "duration": "1 hr"},
                 {"id": "s17", "name": "Manicure & Pedicure", "price": 799, "duration": "1.5 hrs"},
+                {"id": "s18", "name": "Full Body Massage", "price": 999, "duration": "1.5 hrs"},
+                {"id": "s19", "name": "Bridal Makeup Package", "price": 2999, "duration": "3 hrs"},
+                {"id": "s20", "name": "Hair Coloring & Highlights", "price": 1499, "duration": "2 hrs"},
+            ]
+        },
+        {
+            "id": "c5",
+            "name": "Painting",
+            "icon": "🎨",
+            "services": [
+                {"id": "s21", "name": "Single Room Painting", "price": 2499, "duration": "1 day"},
+                {"id": "s22", "name": "Full Home Painting", "price": 8999, "duration": "3-5 days"},
+                {"id": "s23", "name": "Texture Wall Finish", "price": 3999, "duration": "2 days"},
+                {"id": "s24", "name": "Waterproofing Treatment", "price": 1999, "duration": "1 day"},
+                {"id": "s25", "name": "Wood Polish & Varnish", "price": 999, "duration": "4 hrs"},
+                {"id": "s_insp_4", "name": "Expert Inspection (Painting)", "price": 99, "duration": "30 mins", "is_inspection": True},
             ]
         }
     ]
@@ -524,6 +575,99 @@ def validate_promo(current_user):
 # ═══════════════════════════════════════════════════════
 #  BOOKINGS
 # ═══════════════════════════════════════════════════════
+
+@app.route("/api/bookings/auto-match", methods=["POST"])
+@token_required
+def auto_match_booking(current_user):
+    """
+    Service-First Workflow: 
+    Finds the best pro automatically based on category and location.
+    Applies combo discounts and surge pricing.
+    """
+    data = request.get_json()
+    category = data.get("category", "cleaning")
+    services = data.get("services", [])
+    base_amount = data.get("total_amount", 0)
+    scheduled_date = data.get("scheduled_date")
+    scheduled_time = data.get("scheduled_time")
+    
+    # 1. Find nearby online pros
+    user_location = current_user.get("location")
+    if not user_location:
+        return jsonify({"error": "Please set your location first"}), 400
+
+    pipeline = [
+        {
+            "$geoNear": {
+                "near": {"type": "Point", "coordinates": user_location["coordinates"]},
+                "distanceField": "distance_meters",
+                "maxDistance": 10000, # 10km radius for auto-match
+                "spherical": True,
+                "query": {"role": "provider", "specialization": category, "is_online": True}
+            }
+        },
+        {"$sort": {"rating": -1}}, # Priority to top-rated
+        {"$limit": 1}
+    ]
+    
+    best_pros = list(users_collection.aggregate(pipeline))
+    if not best_pros:
+        return jsonify({"error": "No professionals available in your area right now"}), 404
+    
+    provider = best_pros[0]
+    
+    # 2. Advanced Pricing Logic
+    final_amount = base_amount
+    
+    # Combo Discount: 10% off if booking 3 or more services
+    combo_discount = 0
+    if len(services) >= 3:
+        combo_discount = base_amount * 0.10
+        final_amount -= combo_discount
+
+    # Surge Pricing: 1.2x between 5 PM and 9 PM
+    surge_multiplier = 1.0
+    current_hour = datetime.datetime.now().hour
+    if 17 <= current_hour <= 21:
+        surge_multiplier = 1.2
+        final_amount *= surge_multiplier
+
+    final_amount = round(final_amount, 2)
+    job_otp = str(random.randint(1000, 9999))
+
+    booking = {
+        "customer_id": str(current_user["_id"]),
+        "customer_name": current_user.get("name"),
+        "customer_location": current_user.get("location_text"),
+        "provider_id": str(provider["_id"]),
+        "provider_name": provider.get("name"),
+        "services": services,
+        "base_amount": base_amount,
+        "combo_discount": combo_discount,
+        "surge_multiplier": surge_multiplier,
+        "total_amount": final_amount,
+        "scheduled_date": scheduled_date,
+        "scheduled_time": scheduled_time,
+        "status": "pending",
+        "job_otp": job_otp,
+        "created_at": datetime.datetime.utcnow(),
+        "updated_at": datetime.datetime.utcnow()
+    }
+
+    result = bookings_collection.insert_one(booking)
+    booking["_id"] = str(result.inserted_id)
+    
+    return jsonify({
+        "message": "We found a match!",
+        "booking": booking,
+        "provider": {
+            "name": provider["name"],
+            "rating": provider.get("rating"),
+            "distance_km": round(provider["distance_meters"] / 1000, 1)
+        }
+    }), 201
+
+
 
 @app.route("/api/bookings", methods=["POST"])
 @token_required
@@ -717,6 +861,85 @@ def start_job_with_otp(current_user, booking_id):
     )
 
     return jsonify({"message": "OTP verified successfully. Job started!"}), 200
+
+# ═══════════════════════════════════════════════════════
+#  CANCELLATION & RESCHEDULING
+# ═══════════════════════════════════════════════════════
+
+@app.route("/api/bookings/<booking_id>/cancel", methods=["PUT"])
+@token_required
+def cancel_booking(current_user, booking_id):
+    """Cancel a booking. Applies a fee if canceled by customer when already accepted/en_route."""
+    try:
+        booking = bookings_collection.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        return jsonify({"error": "Invalid booking ID format"}), 400
+        
+    if not booking:
+        return jsonify({"error": "Booking not found"}), 404
+
+    user_id = str(current_user["_id"])
+    if booking.get("provider_id") != user_id and booking.get("customer_id") != user_id:
+        return jsonify({"error": "You are not authorized for this booking"}), 403
+
+    if booking.get("status") in ["in_progress", "completed", "cancelled"]:
+        return jsonify({"error": f"Cannot cancel a booking in '{booking.get('status')}' status"}), 400
+
+    update_data = {
+        "status": "cancelled",
+        "updated_at": datetime.datetime.utcnow(),
+        "cancelled_by": user_id
+    }
+
+    # Cancellation fee logic for customers
+    if booking.get("customer_id") == user_id and booking.get("status") in ["accepted", "en_route", "arrived"]:
+        update_data["cancellation_fee"] = 50.0  # Flat ₹50 fee for late cancellation
+
+    bookings_collection.update_one(
+        {"_id": ObjectId(booking_id)},
+        {"$set": update_data}
+    )
+
+    return jsonify({"message": "Booking cancelled successfully", "cancellation_fee": update_data.get("cancellation_fee", 0)}), 200
+
+
+@app.route("/api/bookings/<booking_id>/reschedule", methods=["PUT"])
+@token_required
+def reschedule_booking(current_user, booking_id):
+    """Reschedule a booking to a new date and time."""
+    data = request.get_json()
+    new_date = data.get("scheduled_date")
+    new_time = data.get("scheduled_time")
+
+    if not new_date or not new_time:
+        return jsonify({"error": "Both scheduled_date and scheduled_time are required"}), 400
+
+    try:
+        booking = bookings_collection.find_one({"_id": ObjectId(booking_id)})
+    except Exception:
+        return jsonify({"error": "Invalid booking ID format"}), 400
+        
+    if not booking:
+        return jsonify({"error": "Booking not found"}), 404
+
+    user_id = str(current_user["_id"])
+    if booking.get("customer_id") != user_id:
+        return jsonify({"error": "Only the customer can reschedule"}), 403
+
+    if booking.get("status") not in ["pending", "accepted"]:
+        return jsonify({"error": f"Cannot reschedule a booking in '{booking.get('status')}' status"}), 400
+
+    bookings_collection.update_one(
+        {"_id": ObjectId(booking_id)},
+        {"$set": {
+            "scheduled_date": new_date,
+            "scheduled_time": new_time,
+            "updated_at": datetime.datetime.utcnow()
+        }}
+    )
+
+    return jsonify({"message": "Booking rescheduled successfully"}), 200
+
 
 # ═══════════════════════════════════════════════════════
 #  REVIEWS & CATALOG

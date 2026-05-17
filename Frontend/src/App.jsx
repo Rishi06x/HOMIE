@@ -21,7 +21,10 @@ function App() {
         } catch (err) {
           // Token expired or invalid — clear it
           apiLogout();
+          setUser(null);
         }
+      } else {
+        setUser(null);
       }
       setLoading(false);
     };

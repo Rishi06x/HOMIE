@@ -9,7 +9,7 @@ const api = axios.create({
 
 // Attach JWT to every request automatically
 api.interceptors.request.use((config) => {
-    const token = localStorage.getItem('homie_token');
+    const token = sessionStorage.getItem('homie_token');
     if (token) {
         config.headers.Authorization = `Bearer ${token}`;
     }
@@ -21,7 +21,7 @@ api.interceptors.response.use(
     (response) => response,
     (error) => {
         if (error.response && error.response.status === 401) {
-            localStorage.removeItem('homie_token');
+            sessionStorage.removeItem('homie_token');
             // Optional: window.location.href = '/login'; or trigger a custom event
             // For now, we'll just clear the token; App.jsx might not react immediately 
             // but the next interval call will fail and App.jsx's auth check could help.
@@ -38,14 +38,14 @@ export const registerUser = async (name, email, password, role, location, specia
         price_per_hour: pricePerHour,
     });
     const { token, user } = res.data;
-    localStorage.setItem('homie_token', token);
+    sessionStorage.setItem('homie_token', token);
     return user;
 };
 
 export const loginUser = async (email, password) => {
     const res = await api.post('/auth/login', { email, password });
     const { token, user } = res.data;
-    localStorage.setItem('homie_token', token);
+    sessionStorage.setItem('homie_token', token);
     return user;
 };
 
@@ -60,11 +60,11 @@ export const verifyUser = async () => {
 };
 
 export const logout = () => {
-    localStorage.removeItem('homie_token');
+    sessionStorage.removeItem('homie_token');
 };
 
 export const isLoggedIn = () => {
-    return !!localStorage.getItem('homie_token');
+    return !!sessionStorage.getItem('homie_token');
 };
 
 // ── Professionals API ─────────────────────────────
@@ -89,11 +89,27 @@ export const getProfessionalStats = async () => {
     return res.data.stats;
 };
 
+export const updateProProfile = async (bio, portfolioImages) => {
+    const res = await api.put('/api/professionals/profile', { bio, portfolio_images: portfolioImages });
+    return res.data;
+};
+
 // ── Bookings API ──────────────────────────────────
 
 export const getBookings = async () => {
     const res = await api.get('/api/bookings');
     return res.data.bookings;
+};
+
+export const autoMatchBooking = async (category, services = [], totalAmount = 0, scheduledDate = null, scheduledTime = null) => {
+    const res = await api.post('/api/bookings/auto-match', { 
+        category,
+        services,
+        total_amount: totalAmount,
+        scheduled_date: scheduledDate,
+        scheduled_time: scheduledTime
+    });
+    return res.data;
 };
 
 export const createBooking = async (providerId, issueDescription = "", services = [], totalAmount = 0, scheduledDate = null, scheduledTime = null) => {
@@ -110,6 +126,19 @@ export const createBooking = async (providerId, issueDescription = "", services 
 
 export const updateBookingStatus = async (bookingId, status) => {
     const res = await api.put(`/api/bookings/${bookingId}/status`, { status });
+    return res.data;
+};
+
+export const cancelBooking = async (bookingId) => {
+    const res = await api.put(`/api/bookings/${bookingId}/cancel`);
+    return res.data;
+};
+
+export const rescheduleBooking = async (bookingId, newDate, newTime) => {
+    const res = await api.put(`/api/bookings/${bookingId}/reschedule`, {
+        scheduled_date: newDate,
+        scheduled_time: newTime
+    });
     return res.data;
 };
 
